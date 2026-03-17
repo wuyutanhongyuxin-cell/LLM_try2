@@ -5,7 +5,7 @@
 > 用心理学 Big Five (OCEAN) 人格模型驱动的多 Agent 加密货币纸上交易系统——每个 Agent 拥有独特性格，性格决定交易风格
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-193%20passed-brightgreen.svg)](#)
+[![Tests](https://img.shields.io/badge/tests-223%20passed-brightgreen.svg)](#)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
@@ -59,7 +59,7 @@
 | **确定性约束** | `trait_to_constraint.py` 使用固定公式，不受 LLM 影响 |
 | **Agent 完全隔离** | 每个 Agent 独立记忆、独立持仓、独立 PnL |
 | **金额精确计算** | 所有金额使用 `decimal.Decimal`，禁止 float 算钱 |
-| **真实成本模拟** | 每笔交易扣除滑点 + Taker 手续费 + 8h 资金费率 |
+| **真实成本模拟** | 加密货币：滑点 + 手续费 + 资金费率；CME：滑点 + 按手佣金 |
 | **多采样一致性** | 每次决策调用 3 次 LLM，多数投票决定方向 |
 | **防回溯偏差** | 资产匿名化阻止 LLM 回忆历史价格走势 |
 
@@ -130,19 +130,21 @@ personality-trading-agents/
 ├── src/
 │   ├── personality/             # 人格引擎：OCEAN 模型 + 约束映射 + Prompt 生成（含版本hash）
 │   ├── agent/                   # Agent 核心：交易 Agent + 多采样投票 + 三层记忆 + 反思
-│   ├── market/                  # 行情数据：Mock/Live 数据源 + 技术指标 + 对抗性场景
+│   ├── market/                  # 行情数据：Mock/Live/CME Databento 数据源 + 技术指标 + 对抗性场景
 │   ├── execution/               # 执行层：信号 + 纸上交易 + 聚合 + 风控 + 成本 + 漂移 + 辩论 + 策略
 │   ├── integration/             # 外部集成：Redis 消息总线 + Telegram（信号+漂移+成本告警）
 │   ├── utils/                   # 工具：配置 + 日志 + 匿名化 + 全链路日志 + TF-IDF + 知识图谱
 │   └── main.py                  # 主入口
-├── tests/                       # 193 个测试，覆盖全部模块
+├── tests/                       # 223 个测试，覆盖全部模块
 ├── scripts/
 │   ├── dashboard.py             # Rich 终端实时仪表盘
 │   ├── backtest.py              # 规则回测
 │   ├── llm_backtest.py          # LLM 真实回测（多次运行 + 一致性 + 多市况）
 │   ├── generate_synthetic_data.py # 合成多市况数据（熊市/横盘/牛市）
 │   ├── export_training_data.py  # 决策轨迹导出（JSONL 微调格式）
-│   └── create_agents_config.py  # 批量生成 Agent 配置
+│   ├── create_agents_config.py  # 批量生成 Agent 配置
+│   ├── generate_cme_data.py      # 生成合成 CME 期货 OHLCV 数据
+│   └── download_cme_data.py      # 通过 Databento API 下载真实 CME 数据
 └── pyproject.toml
 ```
 
@@ -295,6 +297,62 @@ ExecutionStrategy (抽象基类)
 
 ---
 
+## P4：多市场支持 — CME 期货
+
+系统现支持 **CME 期货** 与加密货币并行，通过 `trading.yaml` 配置切换：
+
+| 市场 | 资产 | 数据源 | 成本模式 |
+|------|------|--------|---------|
+| 加密货币 | BTC-PERP, ETH-PERP, SOL-PERP, ARB-PERP, DOGE-PERP | Binance REST | 滑点 + 百分比费率 + 资金费率 |
+| CME 期货 | ES, NQ, CL, GC, SI, ZB | Databento API | 滑点 + 按手佣金（无资金费率） |
+
+**CME 合约规格**（已通过 cmegroup.com 官网验证）：
+
+| 合约 | 名称 | 乘数 | Tick Size | Tick Value |
+|------|------|------|-----------|-----------|
+| ES | E-mini 标普 500 | $50 | 0.25 | $12.50 |
+| NQ | E-mini 纳斯达克 100 | $20 | 0.25 | $5.00 |
+| CL | 原油 | $1,000 | $0.01 | $10.00 |
+| GC | 黄金 | $100 | $0.10 | $10.00 |
+| SI | 白银 | $5,000 | $0.005 | $25.00 |
+| ZB | 美国国债 | $1,000 | 1/32 | $31.25 |
+
+**CME 成本模型** — 无资金费率，使用按手佣金：
+```yaml
+# config/trading.yaml → trading.cme.costs
+slippage_bps: 2                # 比加密货币低（2 vs 5 bps）
+commission_per_contract: 1.25  # 单边佣金（美元/手，broker-only 估算）
+enable_costs: true
+```
+
+**Prompt 市场感知**：`prompt_generator.py` 根据市场类型自动切换角色描述和维度解释（如「探索新山寨币」→「探索多样化期货合约」）。
+
+**数据源**：
+- **Mock 模式**：CSV 回放，复用 `MockDataFeed`
+- **Live 模式**：`DatabentoCMEFeed` 封装 Databento SDK（需 `DATABENTO_API_KEY`）
+- **合成数据**：`scripts/generate_cme_data.py` 生成 6 个合约各 2000 条 GBM 价格路径
+
+---
+
+## P5：CME LLM 回测修复 + 多品种对比
+
+修复了 4 个阻塞性 Bug，使 `llm_backtest.py --market cme` 真正可用：
+
+| Bug | 严重程度 | 修复方案 |
+|-----|---------|---------|
+| 成本配置路径断裂（`trading.costs` 不存在） | 严重 | 改为读取 `trading.{market_type}.costs` |
+| `account.py` 完全忽略 CME 成本路径 | 严重 | 新增 `CMECostConfig` + `contract_multiplier` 到 `AgentAccount` |
+| LLM 成本估算硬编码为 Claude Sonnet（$0.0135/调用） | 中等 | 按模型自动检测：DeepSeek ~$0.001，Claude ~$0.0135，GPT-4o-mini ~$0.0006 |
+| 无多品种对比模式 | 功能缺失 | 新增 `--assets ES CL GC ZB` CLI 参数 |
+
+**多品种对比** — 跨多个 CME 合约回测并汇总对比：
+```bash
+python scripts/llm_backtest.py --market cme --assets ES CL GC ZB --runs 2 --anonymize --max-steps 50
+```
+输出：每个品种每个 Agent 的 PnL/Sharpe/交易数 + 跨品种对比表。
+
+---
+
 ## 三层记忆系统（FinMem 启发）
 
 | 层级 | 名称 | 内容 | 容量 | 存储 | 检索方式 |
@@ -330,7 +388,7 @@ cp .env.example .env
 
 ```bash
 pytest tests/ -v
-# 应该看到 193 passed
+# 应该看到 223 passed
 ```
 
 ### 4. 启动系统
@@ -343,6 +401,22 @@ python -m src.main
 
 ```bash
 python scripts/llm_backtest.py --csv data/btc_1h_2024.csv --runs 3 --anonymize
+```
+
+### 5b. 运行 CME 期货回测（规则模式）
+
+```bash
+python scripts/backtest.py --market cme --asset ES --csv data/es_1h_real.csv
+```
+
+### 5c. 运行 CME LLM 回测 + 多品种对比
+
+```bash
+# 单品种
+python scripts/llm_backtest.py --market cme --asset ES --csv data/es_1h_real.csv --runs 1 --anonymize --max-steps 30
+
+# 4 品种对比
+python scripts/llm_backtest.py --market cme --assets ES CL GC ZB --runs 2 --anonymize --max-steps 50
 ```
 
 ### 6. 启动仪表盘（另开一个终端）
@@ -376,6 +450,19 @@ max_calls_per_minute: 20       # 全局限流
 max_cost_per_backtest_usd: 50  # 回测成本硬上限
 ```
 
+### CME 期货成本（`config/trading.yaml`）
+```yaml
+trading:
+  cme:
+    costs:
+      slippage_bps: 2              # 比加密货币更低
+      commission_per_contract: 1.25 # 单边，美元/手
+      enable_costs: true
+    contracts:
+      ES: { multiplier: 50, tick_size: 0.25, tick_value: 12.50 }
+      CL: { multiplier: 1000, tick_size: 0.01, tick_value: 10.00 }
+```
+
 ---
 
 ## 信号聚合模式
@@ -403,7 +490,8 @@ max_cost_per_backtest_usd: 50  # 回测成本硬上限
 | 通知推送 | aiogram 3.x | Telegram 实时告警 + 漂移告警 |
 | 日志 | loguru | 结构化彩色输出 |
 | 仪表盘 | rich | 终端实时 UI |
-| 测试 | pytest + pytest-asyncio | 193 个测试，全模块覆盖 |
+| CME 数据 | `databento` | Databento API 获取 CME 期货 OHLCV |
+| 测试 | pytest + pytest-asyncio | 223 个测试，全模块覆盖 |
 
 **刻意不用的依赖**：pandas、numpy、django、flask、sqlalchemy——保持轻量。
 
@@ -521,6 +609,21 @@ Action KL=0.312 > critical(0.2)
 - [x] `enable_debate` 开关（`config/trading.yaml`，默认关闭）
 - [x] ExecutionStrategy 接口 + RuleBasedStrategy（`strategy.py`）— 校验逻辑从 Agent 解耦
 - [x] 未来 RL 策略可直接替换 RuleBasedStrategy，无需修改 Agent 代码
+
+### P4（完成）：多市场支持 — CME 期货
+- [x] `config/trading.yaml` 多市场结构（market_type: crypto | cme）
+- [x] CME 合约规格（ES/NQ/CL/GC/SI/ZB 乘数，已通过 cmegroup.com 验证）
+- [x] `databento_feed.py` — CME 数据源（Live via Databento + Mock 回退）
+- [x] `cost_model.py` — CMECostConfig 按手佣金（无资金费率）
+- [x] `prompt_generator.py` 市场感知角色和维度描述
+- [x] `market_knowledge.json` 扩展 CME 因果关系
+
+### P5（完成）：CME LLM 回测修复 + 4 品种对比
+- [x] 修复成本配置路径（读取市场专属配置段）
+- [x] `account.py` + `paper_trader.py` — 完整 CME 成本路径（commission_per_contract）
+- [x] 按模型自动估算 LLM 成本（DeepSeek $0.001 / Claude $0.0135 / GPT-4o-mini $0.0006）
+- [x] `--assets ES CL GC ZB` 多品种对比模式 + 跨品种对比表
+- [x] `databento_feed.py` ImportError 安全降级
 
 ### Phase 2（未来）：实盘交易
 - [ ] 接入真实 DEX（GRVT/Paradex）

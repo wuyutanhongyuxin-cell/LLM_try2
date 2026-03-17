@@ -5,7 +5,7 @@
 > A Multi-Agent Crypto Paper Trading System driven by Big Five (OCEAN) Personality Model
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-193%20passed-brightgreen.svg)](#)
+[![Tests](https://img.shields.io/badge/tests-223%20passed-brightgreen.svg)](#)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
@@ -57,7 +57,7 @@ Multiple agents run in parallel, each making independent decisions via LLM (thro
 | **Deterministic constraints** | `trait_to_constraint.py` uses fixed formulas, no LLM influence |
 | **Agent isolation** | Each agent has independent memory, positions, and PnL |
 | **No float for money** | All financial calculations use `decimal.Decimal` |
-| **Realistic costs** | Slippage + taker fees + 8h funding rate on every trade |
+| **Realistic costs** | Crypto: slippage + fees + funding rate; CME: slippage + per-contract commission |
 | **Multi-sample consistency** | 3 LLM calls per decision with majority voting |
 | **Anti look-ahead bias** | Asset anonymization prevents LLM from recalling historical prices |
 
@@ -119,19 +119,21 @@ personality-trading-agents/
 ├── src/
 │   ├── personality/             # OCEAN model, constraint mapping, prompt generation (w/ hash)
 │   ├── agent/                   # Trading agent, multi-sample voting, 3-layer memory, reflection
-│   ├── market/                  # Data feeds (Mock/Live), technical indicators, adversarial scenarios
+│   ├── market/                  # Data feeds (Mock/Live/CME Databento), technical indicators, adversarial scenarios
 │   ├── execution/               # Signal, paper trader, aggregator, risk mgr, cost model, drift monitor, debate, strategy
 │   ├── integration/             # Redis pub/sub, Telegram (signals + drift alerts + cost reports)
 │   ├── utils/                   # Config loader, logger, asset anonymizer, trade logger, TF-IDF, knowledge graph
 │   └── main.py                  # System entry point
-├── tests/                       # 193 tests covering all modules
+├── tests/                       # 223 tests covering all modules
 ├── scripts/
 │   ├── dashboard.py             # Rich terminal real-time dashboard
 │   ├── backtest.py              # Rule-based historical backtesting
 │   ├── llm_backtest.py          # Real LLM backtesting with consistency metrics + multi-market
 │   ├── generate_synthetic_data.py # Generate synthetic bear/sideways/bull CSV data
 │   ├── export_training_data.py  # Export decision traces as JSONL for LLM fine-tuning
-│   └── create_agents_config.py  # Bulk config generation
+│   ├── create_agents_config.py  # Bulk config generation
+│   ├── generate_cme_data.py      # Generate synthetic CME futures OHLCV data
+│   └── download_cme_data.py      # Download real CME data via Databento API
 └── pyproject.toml
 ```
 
@@ -282,6 +284,62 @@ The `_build_signal_from_data()` method now delegates to `strategy.process_signal
 
 ---
 
+## P4: Multi-Market Support — CME Futures
+
+The system now supports **CME futures** alongside crypto, configurable via `trading.yaml`:
+
+| Market | Assets | Data Source | Costs |
+|--------|--------|------------|-------|
+| Crypto | BTC-PERP, ETH-PERP, SOL-PERP, ARB-PERP, DOGE-PERP | Binance REST | Slippage + % fees + funding rate |
+| CME | ES, NQ, CL, GC, SI, ZB | Databento API | Slippage + per-contract commission |
+
+**CME Contract Specifications** (verified against cmegroup.com):
+
+| Contract | Name | Multiplier | Tick Size | Tick Value |
+|----------|------|-----------|-----------|-----------|
+| ES | E-mini S&P 500 | $50 | 0.25 | $12.50 |
+| NQ | E-mini Nasdaq 100 | $20 | 0.25 | $5.00 |
+| CL | Crude Oil | $1,000 | $0.01 | $10.00 |
+| GC | Gold | $100 | $0.10 | $10.00 |
+| SI | Silver | $5,000 | $0.005 | $25.00 |
+| ZB | US Treasury Bond | $1,000 | 1/32 | $31.25 |
+
+**CME Cost Model** — No funding rate, uses per-contract commission:
+```yaml
+# config/trading.yaml → trading.cme.costs
+slippage_bps: 2                # Lower than crypto (2 vs 5 bps)
+commission_per_contract: 1.25  # USD per side (broker-only estimate)
+enable_costs: true
+```
+
+**Prompt Market Awareness**: `prompt_generator.py` adapts role descriptions and trait interpretations per market type (e.g., "explore new altcoins" → "explore diverse futures contracts").
+
+**Data Sources**:
+- **Mock**: CSV-based replay via `MockDataFeed` (same as crypto)
+- **Live**: `DatabentoCMEFeed` wraps the Databento SDK (requires `DATABENTO_API_KEY`)
+- **Synthetic**: `scripts/generate_cme_data.py` creates 2000-bar GBM price paths for all 6 contracts
+
+---
+
+## P5: CME LLM Backtest Fix + Multi-Asset Comparison
+
+Fixed 4 blocking bugs that prevented `llm_backtest.py --market cme` from working:
+
+| Bug | Severity | Fix |
+|-----|----------|-----|
+| Cost config path broken (`trading.costs` doesn't exist) | Critical | Read from `trading.{market_type}.costs` |
+| `account.py` ignores CME cost path | Critical | Added `CMECostConfig` + `contract_multiplier` to `AgentAccount` |
+| LLM cost estimate hardcoded to Claude Sonnet ($0.0135/call) | Medium | Auto-detect model: DeepSeek ~$0.001, Claude ~$0.0135, GPT-4o-mini ~$0.0006 |
+| No multi-asset comparison mode | Missing | Added `--assets ES CL GC ZB` CLI argument |
+
+**Multi-Asset Comparison** — run backtest across multiple CME contracts and compare:
+```bash
+python scripts/llm_backtest.py --market cme --assets ES CL GC ZB --runs 2 --anonymize --max-steps 50
+```
+Outputs per-asset per-agent PnL/Sharpe/trades + cross-asset comparison table.
+
+---
+
 ## Three-Layer Memory System (FinMem-inspired)
 
 | Layer | Name | Content | Capacity | Storage | Retrieval |
@@ -312,7 +370,7 @@ cp .env.example .env
 
 ```bash
 pytest tests/ -v
-# 193 tests should pass
+# 223 tests should pass
 ```
 
 ### 4. Start the System
@@ -325,6 +383,22 @@ python -m src.main
 
 ```bash
 python scripts/llm_backtest.py --csv data/btc_1h_2024.csv --runs 3 --anonymize
+```
+
+### 5b. Run CME Futures Backtest (rule-based)
+
+```bash
+python scripts/backtest.py --market cme --asset ES --csv data/es_1h_real.csv
+```
+
+### 5c. Run CME LLM Backtest with Multi-Asset Comparison
+
+```bash
+# Single asset
+python scripts/llm_backtest.py --market cme --asset ES --csv data/es_1h_real.csv --runs 1 --anonymize --max-steps 30
+
+# 4-asset comparison
+python scripts/llm_backtest.py --market cme --assets ES CL GC ZB --runs 2 --anonymize --max-steps 50
 ```
 
 ### 6. Run Dashboard (separate terminal)
@@ -358,6 +432,19 @@ max_calls_per_minute: 20       # global rate limit
 max_cost_per_backtest_usd: 50  # hard cost cap for backtests
 ```
 
+### CME Futures Costs (`config/trading.yaml`)
+```yaml
+trading:
+  cme:
+    costs:
+      slippage_bps: 2              # Lower than crypto
+      commission_per_contract: 1.25 # Per side, USD
+      enable_costs: true
+    contracts:
+      ES: { multiplier: 50, tick_size: 0.25, tick_value: 12.50 }
+      CL: { multiplier: 1000, tick_size: 0.01, tick_value: 10.00 }
+```
+
 ---
 
 ## Signal Aggregation Modes
@@ -383,7 +470,8 @@ max_cost_per_backtest_usd: 50  # hard cost cap for backtests
 | Notifications | aiogram 3.x | Telegram alerts + drift warnings |
 | Logging | loguru | Structured, colored output |
 | Dashboard | rich | Terminal UI |
-| Testing | pytest + pytest-asyncio | 193 tests, full coverage |
+| CME Data | `databento` | Databento API for CME futures OHLCV |
+| Testing | pytest + pytest-asyncio | 223 tests, full coverage |
 
 **Intentionally excluded**: pandas, numpy, django, flask, sqlalchemy (keeping it lightweight).
 
@@ -458,6 +546,21 @@ Example signal notification:
 - [x] `enable_debate` toggle in `config/trading.yaml` (default: off)
 - [x] ExecutionStrategy interface + RuleBasedStrategy (`strategy.py`) — decouples validation logic from agent core
 - [x] Future RL strategies can replace RuleBasedStrategy without modifying agent code
+
+### P4 (Complete): Multi-Market Support — CME Futures
+- [x] `config/trading.yaml` multi-market structure (market_type: crypto | cme)
+- [x] CME contract specifications (ES/NQ/CL/GC/SI/ZB multipliers, verified against cmegroup.com)
+- [x] `databento_feed.py` — CME data source (Live via Databento + Mock fallback)
+- [x] `cost_model.py` — CMECostConfig with per-contract commission (no funding rate)
+- [x] `prompt_generator.py` market-aware role and trait descriptions
+- [x] `market_knowledge.json` extended with CME causal relations
+
+### P5 (Complete): CME LLM Backtest Fix + 4-Asset Comparison
+- [x] Fixed cost config path (reads from market-specific section)
+- [x] `account.py` + `paper_trader.py` — full CME cost path (commission_per_contract)
+- [x] Model-aware LLM cost estimation (DeepSeek $0.001 / Claude $0.0135 / GPT-4o-mini $0.0006)
+- [x] `--assets ES CL GC ZB` multi-asset comparison mode with cross-asset table
+- [x] `databento_feed.py` graceful ImportError handling
 
 ### Phase 2 (Future): Live Trading
 - [ ] Connect to real DEX (GRVT/Paradex)
