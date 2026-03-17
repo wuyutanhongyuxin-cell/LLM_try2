@@ -1,0 +1,88 @@
+# 交易参数配置 — 支持多市场切换（crypto / cme）
+trading:
+  # 当前激活的市场类型: "crypto" | "cme"
+  market_type: "crypto"
+
+  # ── 加密货币永续合约市场 ──
+  crypto:
+    assets:
+      major: ["BTC-PERP", "ETH-PERP"]
+      all: ["BTC-PERP", "ETH-PERP", "SOL-PERP", "ARB-PERP", "DOGE-PERP"]
+    data_feed:
+      source: "binance"
+      mock_csv_path: "data/btc_1h_2024.csv"
+    costs:
+      slippage_bps: 5              # 滑点 5 bps = 0.05%
+      taker_fee_rate: 0.0004       # Taker 0.04%
+      maker_fee_rate: 0.0002       # Maker 0.02%
+      funding_rate_8h: 0.00015     # 8h资金费率 0.015%
+      enable_costs: true
+
+  # ── CME 期货市场（Databento 数据源）──
+  cme:
+    assets:
+      major: ["ES", "NQ"]
+      all: ["ES", "NQ", "CL", "GC", "SI", "ZB"]
+    data_feed:
+      source: "databento"
+      dataset: "GLBX.MDP3"        # CME Globex
+      schema: "ohlcv-1h"
+      mock_csv_path: "data/es_1h_2024.csv"
+    costs:
+      slippage_bps: 2              # CME 滑点更低
+      commission_per_contract: 1.25  # 单边手续费（美元/手）
+      enable_costs: true
+    # CME 合约规格（乘数 / tick / 交易时间）
+    contracts:
+      ES:
+        name: "E-mini S&P 500"
+        multiplier: 50
+        tick_size: 0.25
+        tick_value: 12.50
+        trading_hours: "17:00-16:00 CT"  # 几乎 23h
+      NQ:
+        name: "E-mini Nasdaq 100"
+        multiplier: 20
+        tick_size: 0.25
+        tick_value: 5.00
+        trading_hours: "17:00-16:00 CT"
+      CL:
+        name: "Crude Oil"
+        multiplier: 1000
+        tick_size: 0.01
+        tick_value: 10.00
+        trading_hours: "17:00-16:00 CT"
+      GC:
+        name: "Gold"
+        multiplier: 100
+        tick_size: 0.10
+        tick_value: 10.00
+        trading_hours: "17:00-16:00 CT"
+      SI:
+        name: "Silver"
+        multiplier: 5000
+        tick_size: 0.005
+        tick_value: 25.00
+        trading_hours: "17:00-16:00 CT"
+      ZB:
+        name: "US Treasury Bond"
+        multiplier: 1000
+        tick_size: 0.03125
+        tick_value: 31.25
+        trading_hours: "17:00-16:00 CT"
+
+  # ── 通用配置（两个市场共用）──
+  data_feed:
+    type: "mock"                   # "mock" | "live"
+    interval_seconds: 60
+
+  aggregator:
+    mode: "independent"            # "independent" | "voting"
+    signal_window_seconds: 120
+    enable_debate: false
+
+  anonymize: false
+
+  risk:
+    global_max_drawdown_pct: 25
+    global_max_daily_loss_pct: 10

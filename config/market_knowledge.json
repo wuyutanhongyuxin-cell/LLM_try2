@@ -1,0 +1,208 @@
+{
+  "version": "2.0",
+  "description": "多市场因果关系图谱：加密货币 + CME 期货",
+  "entities": {
+    "BTC": {"type": "asset", "category": "crypto_major"},
+    "ETH": {"type": "asset", "category": "crypto_major"},
+    "ES": {"type": "asset", "category": "cme_index", "name": "E-mini S&P 500"},
+    "NQ": {"type": "asset", "category": "cme_index", "name": "E-mini Nasdaq 100"},
+    "CL": {"type": "asset", "category": "cme_energy", "name": "Crude Oil"},
+    "GC": {"type": "asset", "category": "cme_metal", "name": "Gold"},
+    "SI": {"type": "asset", "category": "cme_metal", "name": "Silver"},
+    "ZB": {"type": "asset", "category": "cme_bond", "name": "US Treasury Bond"},
+    "FED_RATE": {"type": "macro", "description": "美联储联邦基金利率"},
+    "M2_SUPPLY": {"type": "macro", "description": "全球M2货币供应量"},
+    "DXY": {"type": "macro", "description": "美元指数"},
+    "VIX": {"type": "macro", "description": "CBOE波动率指数"},
+    "CPI": {"type": "macro", "description": "美国CPI通胀数据"},
+    "NFP": {"type": "macro", "description": "非农就业数据"},
+    "BTC_ETF_FLOW": {"type": "institutional", "description": "BTC现货ETF净流入"},
+    "EXCHANGE_RESERVE": {"type": "onchain", "description": "交易所BTC储备量"},
+    "FUNDING_RATE": {"type": "derivatives", "description": "永续合约资金费率"},
+    "OPEN_INTEREST": {"type": "derivatives", "description": "未平仓合约量"},
+    "OPEC_OUTPUT": {"type": "commodity", "description": "OPEC产量决议"},
+    "US10Y": {"type": "bond", "description": "美国10年期国债收益率"}
+  },
+  "causal_relations": [
+    {
+      "from": "FED_RATE", "to": "BTC", "effect": "negative",
+      "lag_days": 30, "strength": "strong",
+      "mechanism": "Rate hikes reduce risk appetite, leading to BTC sell-offs"
+    },
+    {
+      "from": "M2_SUPPLY", "to": "BTC", "effect": "positive",
+      "lag_days": 90, "strength": "strong",
+      "mechanism": "Liquidity expansion flows into risk assets including crypto"
+    },
+    {
+      "from": "DXY", "to": "BTC", "effect": "negative",
+      "lag_days": 7, "strength": "moderate",
+      "mechanism": "Stronger dollar reduces demand for alternative assets"
+    },
+    {
+      "from": "VIX", "to": "BTC", "effect": "negative",
+      "lag_days": 0, "strength": "moderate",
+      "mechanism": "Rising fear index triggers risk-asset sell-offs"
+    },
+    {
+      "from": "BTC_ETF_FLOW", "to": "BTC", "effect": "positive",
+      "lag_days": 1, "strength": "strong",
+      "mechanism": "ETF net inflows create direct buying pressure"
+    },
+    {
+      "from": "EXCHANGE_RESERVE", "to": "BTC", "effect": "negative",
+      "lag_days": 3, "strength": "moderate",
+      "mechanism": "Declining reserves signal accumulation, reducing sell pressure"
+    },
+    {
+      "from": "FUNDING_RATE", "to": "BTC", "effect": "contrarian",
+      "lag_days": 0, "strength": "weak",
+      "mechanism": "Extreme positive = crowded longs, pullback risk; extreme negative = crowded shorts, bounce likely"
+    },
+    {
+      "from": "OPEN_INTEREST", "to": "BTC", "effect": "amplify",
+      "lag_days": 0, "strength": "moderate",
+      "mechanism": "High OI + price movement triggers cascading liquidations, amplifying volatility"
+    },
+    {
+      "from": "BTC", "to": "ETH", "effect": "positive",
+      "lag_days": 0, "strength": "strong",
+      "mechanism": "BTC leads, ETH follows with beta approximately 1.2-1.5"
+    },
+    {
+      "from": "FED_RATE", "to": "ES", "effect": "negative",
+      "lag_days": 1, "strength": "strong",
+      "mechanism": "Rate hikes compress equity valuations via higher discount rates"
+    },
+    {
+      "from": "NFP", "to": "ES", "effect": "positive",
+      "lag_days": 0, "strength": "moderate",
+      "mechanism": "Strong employment data boosts confidence in corporate earnings"
+    },
+    {
+      "from": "CPI", "to": "ES", "effect": "negative",
+      "lag_days": 0, "strength": "moderate",
+      "mechanism": "Higher inflation signals tighter policy, pressuring equities"
+    },
+    {
+      "from": "VIX", "to": "ES", "effect": "negative",
+      "lag_days": 0, "strength": "strong",
+      "mechanism": "VIX is the inverse fear gauge of S&P 500"
+    },
+    {
+      "from": "ES", "to": "NQ", "effect": "positive",
+      "lag_days": 0, "strength": "strong",
+      "mechanism": "NQ (tech-heavy) follows ES with higher beta ~1.3"
+    },
+    {
+      "from": "FED_RATE", "to": "NQ", "effect": "negative",
+      "lag_days": 1, "strength": "strong",
+      "mechanism": "Growth/tech stocks are especially rate-sensitive due to long-duration cash flows"
+    },
+    {
+      "from": "DXY", "to": "GC", "effect": "negative",
+      "lag_days": 0, "strength": "strong",
+      "mechanism": "Gold is priced in USD; stronger dollar makes gold more expensive globally"
+    },
+    {
+      "from": "FED_RATE", "to": "GC", "effect": "negative",
+      "lag_days": 7, "strength": "strong",
+      "mechanism": "Higher rates increase opportunity cost of holding non-yielding gold"
+    },
+    {
+      "from": "VIX", "to": "GC", "effect": "positive",
+      "lag_days": 0, "strength": "moderate",
+      "mechanism": "Gold is a safe-haven asset; fear drives inflows"
+    },
+    {
+      "from": "CPI", "to": "GC", "effect": "positive",
+      "lag_days": 0, "strength": "moderate",
+      "mechanism": "Gold is an inflation hedge; higher CPI boosts demand"
+    },
+    {
+      "from": "OPEC_OUTPUT", "to": "CL", "effect": "negative",
+      "lag_days": 1, "strength": "strong",
+      "mechanism": "Production cuts reduce supply, pushing prices up; increases push down"
+    },
+    {
+      "from": "DXY", "to": "CL", "effect": "negative",
+      "lag_days": 0, "strength": "moderate",
+      "mechanism": "Oil is priced in USD; stronger dollar pressures oil prices"
+    },
+    {
+      "from": "NFP", "to": "CL", "effect": "positive",
+      "lag_days": 0, "strength": "weak",
+      "mechanism": "Strong employment signals higher industrial demand for energy"
+    },
+    {
+      "from": "GC", "to": "SI", "effect": "positive",
+      "lag_days": 0, "strength": "strong",
+      "mechanism": "Silver tracks gold with higher beta (~1.5), adding industrial demand component"
+    },
+    {
+      "from": "FED_RATE", "to": "ZB", "effect": "negative",
+      "lag_days": 0, "strength": "strong",
+      "mechanism": "Rate hikes directly push bond prices down (yields up)"
+    },
+    {
+      "from": "CPI", "to": "ZB", "effect": "negative",
+      "lag_days": 0, "strength": "strong",
+      "mechanism": "Higher inflation erodes bond purchasing power, pushing prices down"
+    },
+    {
+      "from": "US10Y", "to": "ZB", "effect": "negative",
+      "lag_days": 0, "strength": "strong",
+      "mechanism": "10Y yield rise = bond price decline (inverse relationship)"
+    }
+  ],
+  "regime_indicators": [
+    {
+      "condition": "FED_RATE rising AND DXY rising",
+      "regime": "risk_off",
+      "implication": "Reduce positions and tighten stop-losses"
+    },
+    {
+      "condition": "M2_SUPPLY rising AND VIX falling",
+      "regime": "risk_on",
+      "implication": "Consider increasing position sizes"
+    },
+    {
+      "condition": "FUNDING_RATE > 0.03%",
+      "regime": "overheated_long",
+      "implication": "Long-side crowded, be cautious chasing rallies",
+      "applies_to": "crypto"
+    },
+    {
+      "condition": "FUNDING_RATE < -0.01%",
+      "regime": "oversold",
+      "implication": "Short-side crowded, potential bounce",
+      "applies_to": "crypto"
+    },
+    {
+      "condition": "EXCHANGE_RESERVE declining 7d",
+      "regime": "accumulation",
+      "implication": "Whales withdrawing from exchanges, bullish signal",
+      "applies_to": "crypto"
+    },
+    {
+      "condition": "VIX > 30",
+      "regime": "high_fear",
+      "implication": "Extreme fear; equities may be oversold, gold likely rallying"
+    },
+    {
+      "condition": "VIX < 15 AND ES at all-time-high",
+      "regime": "complacency",
+      "implication": "Low volatility complacency; sudden correction risk elevated"
+    },
+    {
+      "condition": "US10Y rising AND CPI rising",
+      "regime": "stagflation_risk",
+      "implication": "Bonds and equities both under pressure; favor commodities/gold"
+    },
+    {
+      "condition": "DXY falling AND GC rising",
+      "regime": "dollar_weakness",
+      "implication": "Weak dollar regime favors gold, oil, and emerging markets"
+    }
+  ]
+}

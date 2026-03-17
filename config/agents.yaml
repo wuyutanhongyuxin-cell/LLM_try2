@@ -1,0 +1,24 @@
+# Agent 人格配置（OCEAN 参数）
+agents:
+  - id: "agent_calm_innovator"
+    preset: "冷静创新型"
+    initial_capital: 10000
+
+  - id: "agent_conservative"
+    preset: "保守焦虑型"
+    initial_capital: 10000
+
+  - id: "agent_aggressive"
+    preset: "激进冒险型"
+    initial_capital: 10000
+
+  # 自定义 OCEAN 参数示例（取消注释启用）：
+  # - id: "agent_custom_1"
+  #   custom:
+  #     name: "自定义测试型"
+  #     openness: 70
+  #     conscientiousness: 60
+  #     extraversion: 40
+  #     agreeableness: 30
+  #     neuroticism: 55
+  #   initial_capital: 10000

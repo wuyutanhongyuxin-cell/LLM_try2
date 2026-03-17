@@ -1,0 +1,30 @@
+# LLM 配置
+# litellm 统一接口，支持多种 provider，model 格式见下方注释
+llm:
+  provider: "deepseek"
+  model: "deepseek/deepseek-chat"    # DeepSeek V3（便宜且强）
+  temperature: 0.3
+  max_tokens: 1024
+  timeout_seconds: 30
+  retry_count: 3
+  retry_delay_seconds: 5
+  max_calls_per_agent_per_hour: 12
+  fallback_model: "deepseek/deepseek-chat"
+  decision_samples: 3            # 每次决策 LLM 调用次数（1=单次，3=投票）
+  consensus_threshold: 0.6       # 多数票占比阈值，低于此值默认 HOLD
+  max_calls_per_minute: 20       # 全局限流（防止回测打爆 API）
+  max_cost_per_backtest_usd: 50.0  # 单次回测成本硬上限
+
+# ── 可选 model 配置示例（取消注释切换）──
+#
+# DeepSeek（最便宜，约 $0.27/M input + $1.10/M output）:
+#   model: "deepseek/deepseek-chat"
+#
+# Anthropic Claude:
+#   model: "claude-sonnet-4-20250514"
+#
+# OpenAI:
+#   model: "gpt-4o-mini"
+#
+# DeepSeek 推理模型（更慢但更准）:
+#   model: "deepseek/deepseek-reasoner"
