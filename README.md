@@ -350,99 +350,346 @@ Outputs per-asset per-agent PnL/Sharpe/trades + cross-asset comparison table.
 
 ---
 
-## Quick Start
+## Full Deployment Guide (Ubuntu VPS)
 
-### 1. Install Dependencies
+Step-by-step guide for deploying on a fresh Ubuntu 22.04/24.04 VPS.
+
+### Step 1: Server Basics
 
 ```bash
-pip install -e ".[dev]"
+ssh root@your-server-ip
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y git curl wget build-essential software-properties-common
 ```
 
-### 2. Configure Environment
+### Step 2: Install Python 3.11+
+
+```bash
+# Ubuntu 22.04 ships Python 3.10 — upgrade via deadsnakes PPA
+sudo add-apt-repository ppa:deadsnakes/ppa -y
+sudo apt update
+sudo apt install -y python3.11 python3.11-venv python3.11-dev
+python3.11 --version  # should output Python 3.11.x
+```
+
+> **Ubuntu 24.04** ships Python 3.12 — skip this step, use `python3` directly.
+
+### Step 3: Install Redis
+
+```bash
+sudo apt install -y redis-server
+sudo systemctl start redis-server
+sudo systemctl enable redis-server
+redis-cli ping  # should output PONG
+```
+
+### Step 4: Clone & Install
+
+```bash
+cd /opt
+git clone https://github.com/wuyutanhongyuxin-cell/LLM_try2.git personality-trading
+cd personality-trading
+python3.11 -m venv venv
+source venv/bin/activate
+pip install -e ".[dev]"
+pytest tests/ -v  # should see 223 passed
+```
+
+### Step 5: Configure Environment
 
 ```bash
 cp .env.example .env
-# Edit .env with your API keys:
-# ANTHROPIC_API_KEY, REDIS_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+nano .env
 ```
 
-### 3. Run Tests
-
 ```bash
-pytest tests/ -v
-# 223 tests should pass
+# ── LLM API Key (pick one) ──
+DEEPSEEK_API_KEY=sk-...          # cheapest (~$0.001/call)
+ANTHROPIC_API_KEY=sk-ant-...     # best quality (~$0.014/call)
+OPENAI_API_KEY=sk-...            # mid-range (~$0.001/call)
+
+# ── Infrastructure ──
+REDIS_URL=redis://localhost:6379/0
+
+# ── Telegram (optional) ──
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
+TELEGRAM_CHAT_ID=123456789
+
+# ── CME Data (optional, synthetic data works without this) ──
+DATABENTO_API_KEY=db-...
+
+LOG_LEVEL=INFO
 ```
 
-### 4. Start the System
+### Step 6: Choose LLM Model
 
-```bash
-python -m src.main
+Edit `config/llm.yaml`:
+
+| `model` value | Provider | Required Key | Cost/call | Best for |
+|---------------|----------|-------------|----------|---------|
+| `deepseek/deepseek-chat` | DeepSeek | `DEEPSEEK_API_KEY` | ~$0.001 | Daily testing, bulk backtests |
+| `deepseek/deepseek-reasoner` | DeepSeek | `DEEPSEEK_API_KEY` | ~$0.003 | Better reasoning |
+| `claude-sonnet-4-20250514` | Anthropic | `ANTHROPIC_API_KEY` | ~$0.014 | Highest decision quality |
+| `gpt-4o-mini` | OpenAI | `OPENAI_API_KEY` | ~$0.001 | Cost-effective mid-range |
+
+### Step 7: Choose Market Type
+
+Edit `config/trading.yaml`:
+
+```yaml
+trading:
+  market_type: "crypto"    # change to "cme" for CME futures
 ```
 
-### 5. Run LLM Backtest (with anonymization)
+### Step 8: Generate Synthetic Data
 
 ```bash
-python scripts/llm_backtest.py --csv data/btc_1h_2024.csv --runs 3 --anonymize
+# Generate CME futures synthetic data (6 contracts × 2000 bars)
+python scripts/generate_cme_data.py
+# Outputs: data/es_1h_2024.csv, data/cl_1h_2024.csv, etc.
 ```
 
-### 5b. Run CME Futures Backtest (rule-based)
+### Step 9: Run Your First Backtest
 
 ```bash
-python scripts/backtest.py --market cme --asset ES --csv data/es_1h_real.csv
+# Crypto rule-based backtest (free, no LLM calls)
+python scripts/backtest.py --market crypto --csv data/btc_1h_2024.csv
+
+# CME rule-based backtest (free)
+python scripts/backtest.py --market cme --asset ES --csv data/es_1h_2024.csv
 ```
 
-### 5c. Run CME LLM Backtest with Multi-Asset Comparison
+### Step 10: Start the Live System
 
 ```bash
-# Single asset
-python scripts/llm_backtest.py --market cme --asset ES --csv data/es_1h_real.csv --runs 1 --anonymize --max-steps 30
-
-# 4-asset comparison
-python scripts/llm_backtest.py --market cme --assets ES CL GC ZB --runs 2 --anonymize --max-steps 50
+python -m src.main           # start multi-agent system
+# In another terminal:
+python scripts/dashboard.py  # real-time Rich dashboard
 ```
 
-### 6. Run Dashboard (separate terminal)
+### (Optional) systemd Auto-Start
 
 ```bash
-python scripts/dashboard.py
+sudo tee /etc/systemd/system/trading-agents.service > /dev/null << 'EOF'
+[Unit]
+Description=Personality Trading Agents
+After=redis-server.service network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/personality-trading
+ExecStart=/opt/personality-trading/venv/bin/python -m src.main
+Restart=on-failure
+RestartSec=10
+Environment="PATH=/opt/personality-trading/venv/bin:/usr/bin"
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable trading-agents
+sudo systemctl start trading-agents
+journalctl -u trading-agents -f  # view live logs
 ```
 
 ---
 
-## Configuration
+## CME Futures Asset Selection Guide
+
+### Supported CME Contracts
+
+| Code | Name | Multiplier | Contract Value (~) | Volatility | Beginner? |
+|------|------|-----------|-------------------|-----------|-----------|
+| **ES** | E-mini S&P 500 | $50/pt | ~$295,000 | Low | Recommended |
+| **NQ** | E-mini Nasdaq 100 | $20/pt | ~$410,000 | Medium | Recommended |
+| **CL** | Crude Oil | $1,000/bbl | ~$70,000 | High | Advanced |
+| **GC** | Gold | $100/oz | ~$300,000 | Medium-Low | Recommended |
+| **SI** | Silver | $5,000/oz | ~$165,000 | High | Advanced |
+| **ZB** | US Treasury Bond | $1,000/pt | ~$112,000 | Very Low | Recommended |
+
+### Recommended Combinations
+
+- **Beginner**: `ES GC ZB` — low volatility, clear macro drivers
+- **Classic 4-Asset**: `ES CL GC ZB` — equity + commodity + metal + fixed income
+- **Full Comparison**: `ES NQ CL GC SI ZB` — all 6 contracts
+
+---
+
+## Backtest Command Reference
+
+### 1. Rule-Based Backtest (Free, No LLM Calls)
+
+```bash
+# Crypto
+python scripts/backtest.py --market crypto --csv data/btc_1h_2024.csv
+
+# CME — individual contracts
+python scripts/backtest.py --market cme --asset ES --csv data/es_1h_2024.csv
+python scripts/backtest.py --market cme --asset CL --csv data/cl_1h_2024.csv
+python scripts/backtest.py --market cme --asset GC --csv data/gc_1h_2024.csv
+python scripts/backtest.py --market cme --asset ZB --csv data/zb_1h_2024.csv
+python scripts/backtest.py --market cme --asset NQ --csv data/nq_1h_2024.csv
+python scripts/backtest.py --market cme --asset SI --csv data/si_1h_2024.csv
+```
+
+### 2. LLM Backtest (Real LLM Calls, Costs API Credits)
+
+```bash
+# Quick test (cheap)
+python scripts/llm_backtest.py --csv data/btc_1h_2024.csv --runs 1 --agents 2 --max-steps 30
+
+# Standard crypto backtest
+python scripts/llm_backtest.py --csv data/btc_1h_2024.csv --runs 3 --agents 3 --anonymize
+
+# CME single-asset (e.g., ES, CL, GC, ZB)
+python scripts/llm_backtest.py \
+  --market cme --asset ES --csv data/es_1h_2024.csv \
+  --runs 2 --agents 3 --anonymize --max-steps 100
+
+python scripts/llm_backtest.py \
+  --market cme --asset CL --csv data/cl_1h_2024.csv \
+  --runs 2 --agents 3 --anonymize --max-steps 100
+```
+
+### 3. Multi-Asset Comparison
+
+```bash
+# Classic 4-asset
+python scripts/llm_backtest.py \
+  --market cme --assets ES CL GC ZB \
+  --csv-dir data --runs 2 --agents 3 --anonymize --max-steps 50
+
+# All 6 contracts
+python scripts/llm_backtest.py \
+  --market cme --assets ES NQ CL GC SI ZB \
+  --csv-dir data --runs 1 --agents 3 --anonymize --max-steps 30
+
+# Equity indices only
+python scripts/llm_backtest.py \
+  --market cme --assets ES NQ \
+  --csv-dir data --runs 3 --agents 3 --anonymize --max-steps 100
+
+# Commodities only
+python scripts/llm_backtest.py \
+  --market cme --assets CL GC SI \
+  --csv-dir data --runs 2 --agents 3 --anonymize --max-steps 80
+```
+
+### 4. Multi-Market Stress Test
+
+```bash
+python scripts/generate_synthetic_data.py --csv data/btc_1h_2024.csv --output data/
+python scripts/llm_backtest.py --csv data/btc_bull.csv --runs 3 --multi-market --anonymize --max-steps 100
+```
+
+### LLM Backtest Parameter Reference
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `--csv` | string | **required** | Historical data CSV path |
+| `--runs` | int | 3 | Number of repeated runs (for consistency metrics) |
+| `--agents` | int | 3 | Number of preset personality archetypes to use |
+| `--anonymize` | flag | off | Enable asset anonymization (BTC-PERP → ASSET_A) |
+| `--max-steps` | int | 500 | Max backtest steps (1 step = 1 candle) |
+| `--market` | choice | crypto | Market type: `crypto` or `cme` |
+| `--asset` | string | auto | Single-asset code (e.g., `ES`, `BTC-PERP`) |
+| `--assets` | list | none | Multi-asset mode, space-separated (e.g., `ES CL GC ZB`) |
+| `--csv-dir` | string | data | CSV directory for multi-asset mode |
+| `--multi-market` | flag | off | Cross-market-regime comparison |
+
+### Cost Estimates
+
+| Scenario | Parameters | DeepSeek | Claude | GPT-4o-mini |
+|----------|-----------|----------|--------|-------------|
+| Quick test | `--runs 1 --agents 2 --max-steps 30` | ~$0.18 | ~$2.43 | ~$0.11 |
+| Standard | `--runs 3 --agents 3 --max-steps 100` | ~$2.70 | ~$36.45 | ~$1.62 |
+| 4-asset comparison | `--assets ES CL GC ZB --runs 2 --max-steps 50` | ~$3.60 | ~$48.60 | ~$2.16 |
+| Full 6-asset deep | `--assets ES NQ CL GC SI ZB --runs 3 --max-steps 100` | ~$16.20 | ~$218.70 | ~$9.72 |
+
+> Formula: `cost = runs × agents × max_steps × decision_samples(3) × per_call_cost`
+> Protected by `max_cost_per_backtest_usd` hard cap (default $50).
+
+---
+
+## Configuration Reference
 
 ### Trading Costs (`config/trading.yaml`)
+
+**Crypto** (at `trading.crypto.costs`):
 ```yaml
-costs:
-  slippage_bps: 5
-  taker_fee_rate: 0.0004
-  maker_fee_rate: 0.0002
-  funding_rate_8h: 0.00015    # 2024 BTC-USDT avg ~0.017%
-  enable_costs: true           # false for A/B comparison
-anonymize: false               # true for backtest (recommended)
-aggregator:
-  enable_debate: false         # true enables Bull/Bear debate (voting mode only)
+trading:
+  crypto:
+    costs:
+      slippage_bps: 5              # 5 bps = 0.05%
+      taker_fee_rate: 0.0004       # 0.04%
+      maker_fee_rate: 0.0002       # 0.02%
+      funding_rate_8h: 0.00015     # 0.015% per 8h
+      enable_costs: true
 ```
 
-### Multi-Sample Voting (`config/llm.yaml`)
-```yaml
-decision_samples: 3            # LLM calls per decision
-consensus_threshold: 0.6       # vote share to act
-max_calls_per_minute: 20       # global rate limit
-max_cost_per_backtest_usd: 50  # hard cost cap for backtests
-```
-
-### CME Futures Costs (`config/trading.yaml`)
+**CME** (at `trading.cme.costs`):
 ```yaml
 trading:
   cme:
     costs:
-      slippage_bps: 2              # Lower than crypto
-      commission_per_contract: 1.25 # Per side, USD
+      slippage_bps: 2
+      commission_per_contract: 1.25  # USD per side
       enable_costs: true
     contracts:
       ES: { multiplier: 50, tick_size: 0.25, tick_value: 12.50 }
+      NQ: { multiplier: 20, tick_size: 0.25, tick_value: 5.00 }
       CL: { multiplier: 1000, tick_size: 0.01, tick_value: 10.00 }
+      GC: { multiplier: 100, tick_size: 0.10, tick_value: 10.00 }
+      SI: { multiplier: 5000, tick_size: 0.005, tick_value: 25.00 }
+      ZB: { multiplier: 1000, tick_size: 0.03125, tick_value: 31.25 }
+```
+
+### General Settings
+```yaml
+trading:
+  market_type: "crypto"          # "crypto" | "cme"
+  data_feed:
+    type: "mock"                 # "mock" (CSV) | "live" (real-time)
+    interval_seconds: 60
+  aggregator:
+    mode: "independent"          # "independent" | "voting"
+    enable_debate: false
+  anonymize: false               # true recommended for backtests
+  risk:
+    global_max_drawdown_pct: 25
+    global_max_daily_loss_pct: 10
+```
+
+### LLM Settings (`config/llm.yaml`)
+```yaml
+llm:
+  model: "deepseek/deepseek-chat"
+  temperature: 0.3
+  decision_samples: 3            # 1 = single call, 3 = majority voting
+  consensus_threshold: 0.6       # 60% vote share to act
+  max_calls_per_minute: 20
+  max_cost_per_backtest_usd: 50.0
+```
+
+### Agent Personalities (`config/agents.yaml`)
+```yaml
+agents:
+  - id: "agent_calm_innovator"
+    preset: "冷静创新型"           # O=90 C=80 E=25 A=20 N=10
+    initial_capital: 10000
+
+  # Custom OCEAN params:
+  - id: "agent_custom"
+    custom:
+      name: "Custom Trader"
+      openness: 70
+      conscientiousness: 60
+      extraversion: 40
+      agreeableness: 30
+      neuroticism: 55
+    initial_capital: 10000
 ```
 
 ---

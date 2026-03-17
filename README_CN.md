@@ -365,103 +365,600 @@ python scripts/llm_backtest.py --market cme --assets ES CL GC ZB --runs 2 --anon
 
 ---
 
-## 快速开始
+## 完整部署教程（Ubuntu VPS）
 
-### 1. 安装依赖
+本节以全新的 Ubuntu 22.04/24.04 VPS 为例，手把手教你从零开始部署到运行。
+
+### Step 1：服务器基础环境
 
 ```bash
+# 登录 VPS（替换为你的 IP 和用户名）
+ssh root@your-server-ip
+
+# 更新系统
+sudo apt update && sudo apt upgrade -y
+
+# 安装基础工具
+sudo apt install -y git curl wget build-essential software-properties-common
+```
+
+### Step 2：安装 Python 3.11+
+
+```bash
+# 添加 deadsnakes PPA（Ubuntu 22.04 默认是 Python 3.10，需要升级）
+sudo add-apt-repository ppa:deadsnakes/ppa -y
+sudo apt update
+
+# 安装 Python 3.11 和相关工具
+sudo apt install -y python3.11 python3.11-venv python3.11-dev
+
+# 验证版本
+python3.11 --version
+# 应输出: Python 3.11.x
+
+# （可选）设为默认 python3
+sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
+```
+
+> **Ubuntu 24.04** 自带 Python 3.12，可跳过此步骤，直接用 `python3`。
+
+### Step 3：安装 Redis
+
+Redis 用于 Agent 间消息通信和记忆存储。
+
+```bash
+# 安装 Redis 服务器
+sudo apt install -y redis-server
+
+# 启动并设为开机自启
+sudo systemctl start redis-server
+sudo systemctl enable redis-server
+
+# 验证 Redis 是否正常运行
+redis-cli ping
+# 应输出: PONG
+```
+
+### Step 4：克隆项目并创建虚拟环境
+
+```bash
+# 克隆项目
+cd /opt
+git clone https://github.com/wuyutanhongyuxin-cell/LLM_try2.git personality-trading
+cd personality-trading
+
+# 创建 Python 虚拟环境
+python3.11 -m venv venv
+
+# 激活虚拟环境（每次新开终端都需要执行）
+source venv/bin/activate
+
+# 安装项目依赖（含开发依赖）
 pip install -e ".[dev]"
-```
 
-### 2. 配置环境变量
-
-```bash
-cp .env.example .env
-# 编辑 .env 填入你的 API 密钥：
-# ANTHROPIC_API_KEY=sk-ant-...
-# REDIS_URL=redis://localhost:6379/0
-# TELEGRAM_BOT_TOKEN=...
-# TELEGRAM_CHAT_ID=...
-```
-
-### 3. 运行测试
-
-```bash
+# 验证安装
 pytest tests/ -v
-# 应该看到 223 passed
+# 应看到 223 passed
 ```
 
-### 4. 启动系统
+### Step 5：配置环境变量
 
 ```bash
+# 复制模板
+cp .env.example .env
+
+# 编辑环境变量
+nano .env
+```
+
+`.env` 文件内容（根据你的需求配置）：
+
+```bash
+# ── LLM API Key（三选一即可）──
+
+# DeepSeek（最便宜，推荐初次使用）
+# 注册: https://platform.deepseek.com → API Keys → 创建
+DEEPSEEK_API_KEY=sk-...
+
+# Anthropic Claude（最强但最贵）
+# 注册: https://console.anthropic.com → API Keys
+ANTHROPIC_API_KEY=sk-ant-...
+
+# OpenAI（GPT-4o-mini 性价比不错）
+# 注册: https://platform.openai.com → API Keys
+OPENAI_API_KEY=sk-...
+
+# ── 基础设施 ──
+
+# Redis 连接（本地默认即可，不用改）
+REDIS_URL=redis://localhost:6379/0
+
+# ── Telegram 通知（可选，不用可留空）──
+
+# 1. 在 Telegram 搜索 @BotFather → /newbot → 获取 Token
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
+
+# 2. 在 Telegram 搜索 @userinfobot → 获取你的 Chat ID
+TELEGRAM_CHAT_ID=123456789
+
+# ── CME 期货数据（可选，用合成数据可不填）──
+
+# Databento 注册: https://databento.com → 获取 API Key
+DATABENTO_API_KEY=db-...
+
+# ── 日志级别 ──
+LOG_LEVEL=INFO
+```
+
+> **省钱建议**：DeepSeek V3 的 API 价格约 $0.27/M input + $1.10/M output，单次回测（50 步 × 3 Agent × 3 次投票）成本约 $0.45。Claude Sonnet 同样回测约 $6.08。
+
+### Step 6：选择 LLM 模型
+
+编辑 `config/llm.yaml`，选择你要使用的模型：
+
+```bash
+nano config/llm.yaml
+```
+
+```yaml
+llm:
+  provider: "deepseek"
+  model: "deepseek/deepseek-chat"    # ← 改这里切换模型
+  temperature: 0.3
+  max_tokens: 1024
+  timeout_seconds: 30
+  retry_count: 3
+  retry_delay_seconds: 5
+  max_calls_per_agent_per_hour: 12
+  fallback_model: "deepseek/deepseek-chat"
+  decision_samples: 3            # 每次决策调 3 次 LLM 投票
+  consensus_threshold: 0.6       # 60% 票数才执行
+  max_calls_per_minute: 20       # 全局限流（防止打爆 API）
+  max_cost_per_backtest_usd: 50.0  # 回测花费上限
+```
+
+**模型选择对照表**：
+
+| model 值 | 提供商 | 需要的 API Key | 成本/调用 | 适用场景 |
+|----------|--------|---------------|----------|---------|
+| `deepseek/deepseek-chat` | DeepSeek | `DEEPSEEK_API_KEY` | ~$0.001 | 日常测试、大量回测 |
+| `deepseek/deepseek-reasoner` | DeepSeek | `DEEPSEEK_API_KEY` | ~$0.003 | 需要更准确推理时 |
+| `claude-sonnet-4-20250514` | Anthropic | `ANTHROPIC_API_KEY` | ~$0.014 | 最佳决策质量 |
+| `gpt-4o-mini` | OpenAI | `OPENAI_API_KEY` | ~$0.001 | 性价比折中 |
+
+### Step 7：选择市场类型
+
+编辑 `config/trading.yaml`，选择要交易的市场：
+
+```bash
+nano config/trading.yaml
+```
+
+找到 `market_type` 行：
+
+```yaml
+trading:
+  market_type: "crypto"    # ← 改为 "cme" 可切换到 CME 期货市场
+```
+
+- **`"crypto"`**：加密货币永续合约（BTC-PERP、ETH-PERP 等）
+- **`"cme"`**：CME 期货（ES、NQ、CL、GC、SI、ZB）
+
+### Step 8：生成合成数据（首次运行必做）
+
+项目自带合成数据生成脚本，不需要真实行情数据就能回测。
+
+```bash
+# 生成加密货币合成数据（如果你还没有 btc_1h_2024.csv）
+# 需要提供一个种子 CSV 或者使用已有的 data/ 目录下的文件
+
+# 生成 CME 期货合成数据（6 个品种各 2000 条 1h K 线）
+python scripts/generate_cme_data.py
+# 输出:
+#   data/es_1h_2024.csv: 2000 行, 5200.00 → xxxx.xx
+#   data/nq_1h_2024.csv: 2000 行, 18000.00 → xxxx.xx
+#   data/cl_1h_2024.csv: 2000 行, 72.00 → xx.xx
+#   data/gc_1h_2024.csv: 2000 行, 2400.00 → xxxx.xx
+#   data/si_1h_2024.csv: 2000 行, 28.00 → xx.xx
+#   data/zb_1h_2024.csv: 2000 行, 118.00 → xxx.xx
+```
+
+### Step 9：运行你的第一次回测
+
+```bash
+# 激活虚拟环境（如果还没激活）
+source venv/bin/activate
+
+# 最简单的加密货币回测（规则模式，不花钱）
+python scripts/backtest.py --market crypto --csv data/btc_1h_2024.csv
+
+# 最简单的 CME 期货回测（规则模式，不花钱）
+python scripts/backtest.py --market cme --asset ES --csv data/es_1h_2024.csv
+```
+
+### Step 10：启动实时系统
+
+```bash
+# 启动多 Agent 并行决策系统
 python -m src.main
-```
 
-### 5. 运行 LLM 回测（推荐开启匿名化）
-
-```bash
-python scripts/llm_backtest.py --csv data/btc_1h_2024.csv --runs 3 --anonymize
-```
-
-### 5b. 运行 CME 期货回测（规则模式）
-
-```bash
-python scripts/backtest.py --market cme --asset ES --csv data/es_1h_real.csv
-```
-
-### 5c. 运行 CME LLM 回测 + 多品种对比
-
-```bash
-# 单品种
-python scripts/llm_backtest.py --market cme --asset ES --csv data/es_1h_real.csv --runs 1 --anonymize --max-steps 30
-
-# 4 品种对比
-python scripts/llm_backtest.py --market cme --assets ES CL GC ZB --runs 2 --anonymize --max-steps 50
-```
-
-### 6. 启动仪表盘（另开一个终端）
-
-```bash
+# 另开一个终端，启动实时仪表盘
+# ssh root@your-server-ip
+# cd /opt/personality-trading && source venv/bin/activate
 python scripts/dashboard.py
+```
+
+> 按 `Ctrl+C` 可优雅关闭系统（会自动保存状态）。
+
+### （可选）用 systemd 设置后台自启
+
+```bash
+# 创建 systemd 服务文件
+sudo tee /etc/systemd/system/trading-agents.service > /dev/null << 'EOF'
+[Unit]
+Description=Personality Trading Agents
+After=redis-server.service network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/personality-trading
+ExecStart=/opt/personality-trading/venv/bin/python -m src.main
+Restart=on-failure
+RestartSec=10
+Environment="PATH=/opt/personality-trading/venv/bin:/usr/bin"
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 启用并启动服务
+sudo systemctl daemon-reload
+sudo systemctl enable trading-agents
+sudo systemctl start trading-agents
+
+# 查看运行状态
+sudo systemctl status trading-agents
+
+# 查看实时日志
+journalctl -u trading-agents -f
+```
+
+### （可选）用 screen/tmux 保持后台运行
+
+如果不想用 systemd，也可以用 screen：
+
+```bash
+# 安装 screen
+sudo apt install -y screen
+
+# 创建一个 screen 会话运行系统
+screen -S trading
+source venv/bin/activate
+python -m src.main
+# 按 Ctrl+A 然后按 D 可以把 screen 放到后台
+
+# 重新连接
+screen -r trading
 ```
 
 ---
 
-## 配置说明
+## CME 期货品种选择详解
 
-### 交易成本（`config/trading.yaml`）
-```yaml
-costs:
-  slippage_bps: 5              # 滑点 5 bps = 0.05%
-  taker_fee_rate: 0.0004       # Taker 手续费 0.04%
-  maker_fee_rate: 0.0002       # Maker 手续费 0.02%
-  funding_rate_8h: 0.00015     # 资金费率 0.015%/8h
-  enable_costs: true           # false 可关闭（对比实验用）
-anonymize: false               # 回测建议开启 true
-aggregator:
-  enable_debate: false         # true 启用 Bull/Bear 辩论（仅 voting 模式）
+### 支持的 6 个 CME 品种
+
+| 品种代码 | 名称 | 合约乘数 | 合约价值（约） | 波动特征 | 适合新手？ |
+|---------|------|---------|--------------|---------|----------|
+| **ES** | E-mini 标普 500 | $50/点 | ~$295,000 | 低波动，趋势清晰 | 推荐 |
+| **NQ** | E-mini 纳斯达克 100 | $20/点 | ~$410,000 | 中波动，科技股驱动 | 推荐 |
+| **CL** | WTI 原油 | $1,000/桶 | ~$70,000 | 高波动，地缘政治敏感 | 进阶 |
+| **GC** | 黄金 | $100/盎司 | ~$300,000 | 中低波动，避险属性 | 推荐 |
+| **SI** | 白银 | $5,000/盎司 | ~$165,000 | 高波动，工业+贵金属 | 进阶 |
+| **ZB** | 美国国债 30年 | $1,000/点 | ~$112,000 | 极低波动，利率驱动 | 推荐 |
+
+### 如何选择品种
+
+**新手入门**（推荐先跑这些）：
+- `ES`（标普）：最流动、最稳定的期货合约，全球交易量第一
+- `GC`（黄金）：波动适中，逻辑清晰（避险资产）
+- `ZB`（国债）：波动最小，适合理解系统机制
+
+**进阶组合**：
+- `ES CL GC ZB`：经典 4 品种组合，覆盖股指+商品+贵金属+固定收益
+- `ES NQ CL GC SI ZB`：全品种对比，观察不同性格 Agent 在不同品种上的差异
+
+---
+
+## 回测命令大全
+
+### 1. 规则回测（不调 LLM，不花钱）
+
+规则回测用硬编码的买入/卖出规则（基于 RSI 和价格变化），不调用任何 LLM API，适合验证系统是否正常工作。
+
+```bash
+# ── 加密货币规则回测 ──
+python scripts/backtest.py --market crypto --csv data/btc_1h_2024.csv
+
+# ── CME 期货规则回测（逐品种）──
+
+# ES（标普 500）
+python scripts/backtest.py --market cme --asset ES --csv data/es_1h_2024.csv
+
+# CL（原油）
+python scripts/backtest.py --market cme --asset CL --csv data/cl_1h_2024.csv
+
+# GC（黄金）
+python scripts/backtest.py --market cme --asset GC --csv data/gc_1h_2024.csv
+
+# ZB（国债）
+python scripts/backtest.py --market cme --asset ZB --csv data/zb_1h_2024.csv
+
+# NQ（纳斯达克）
+python scripts/backtest.py --market cme --asset NQ --csv data/nq_1h_2024.csv
+
+# SI（白银）
+python scripts/backtest.py --market cme --asset SI --csv data/si_1h_2024.csv
 ```
 
-### 多采样投票（`config/llm.yaml`）
-```yaml
-decision_samples: 3            # 每次决策 LLM 调用次数
-consensus_threshold: 0.6       # 投票占比阈值
-max_calls_per_minute: 20       # 全局限流
-max_cost_per_backtest_usd: 50  # 回测成本硬上限
+**参数说明**：
+
+| 参数 | 说明 | 示例 |
+|------|------|------|
+| `--market` | 市场类型：`crypto` 或 `cme` | `--market cme` |
+| `--asset` | 交易品种代码 | `--asset ES` |
+| `--csv` | 历史数据 CSV 文件路径 | `--csv data/es_1h_2024.csv` |
+
+### 2. LLM 回测（调用真实 LLM，会产生 API 费用）
+
+LLM 回测调用真实的大模型做交易决策，结果更有意义但会消耗 API 额度。
+
+```bash
+# ── 加密货币 LLM 回测 ──
+
+# 基础回测：3 次运行 × 3 个 Agent × 500 步
+python scripts/llm_backtest.py --csv data/btc_1h_2024.csv --runs 3 --agents 3 --anonymize
+
+# 快速试跑（省钱版）：1 次运行 × 2 个 Agent × 30 步
+python scripts/llm_backtest.py --csv data/btc_1h_2024.csv --runs 1 --agents 2 --max-steps 30
+
+# ── CME 期货 LLM 回测（单品种）──
+
+# ES 标普 500 回测
+python scripts/llm_backtest.py \
+  --market cme \
+  --asset ES \
+  --csv data/es_1h_2024.csv \
+  --runs 2 \
+  --agents 3 \
+  --anonymize \
+  --max-steps 100
+
+# CL 原油回测
+python scripts/llm_backtest.py \
+  --market cme \
+  --asset CL \
+  --csv data/cl_1h_2024.csv \
+  --runs 2 \
+  --agents 3 \
+  --anonymize \
+  --max-steps 100
+
+# GC 黄金回测
+python scripts/llm_backtest.py \
+  --market cme \
+  --asset GC \
+  --csv data/gc_1h_2024.csv \
+  --runs 2 \
+  --agents 3 \
+  --anonymize \
+  --max-steps 100
+
+# ZB 国债回测
+python scripts/llm_backtest.py \
+  --market cme \
+  --asset ZB \
+  --csv data/zb_1h_2024.csv \
+  --runs 2 \
+  --agents 3 \
+  --anonymize \
+  --max-steps 100
 ```
 
-### CME 期货成本（`config/trading.yaml`）
+### 3. 多品种对比回测
+
+同时回测多个 CME 品种，生成跨品种对比表。
+
+```bash
+# ── 经典 4 品种对比（ES + CL + GC + ZB）──
+python scripts/llm_backtest.py \
+  --market cme \
+  --assets ES CL GC ZB \
+  --csv-dir data \
+  --runs 2 \
+  --agents 3 \
+  --anonymize \
+  --max-steps 50
+
+# ── 全 6 品种对比 ──
+python scripts/llm_backtest.py \
+  --market cme \
+  --assets ES NQ CL GC SI ZB \
+  --csv-dir data \
+  --runs 1 \
+  --agents 3 \
+  --anonymize \
+  --max-steps 30
+
+# ── 只对比股指（ES vs NQ）──
+python scripts/llm_backtest.py \
+  --market cme \
+  --assets ES NQ \
+  --csv-dir data \
+  --runs 3 \
+  --agents 3 \
+  --anonymize \
+  --max-steps 100
+
+# ── 只对比商品（CL + GC + SI）──
+python scripts/llm_backtest.py \
+  --market cme \
+  --assets CL GC SI \
+  --csv-dir data \
+  --runs 2 \
+  --agents 3 \
+  --anonymize \
+  --max-steps 80
+```
+
+### 4. 多市况压力测试
+
+```bash
+# 先生成不同市况的合成数据
+python scripts/generate_synthetic_data.py --csv data/btc_1h_2024.csv --output data/
+
+# 然后用 --multi-market 参数跨市况对比
+python scripts/llm_backtest.py \
+  --csv data/btc_bull.csv \
+  --runs 3 \
+  --multi-market \
+  --anonymize \
+  --max-steps 100
+```
+
+### LLM 回测参数完整说明
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--csv` | 字符串 | **必填** | 历史数据 CSV 文件路径 |
+| `--runs` | 整数 | 3 | 重复运行次数（用于收集决策一致性数据） |
+| `--agents` | 整数 | 3 | 使用前 N 个预定义人格原型 |
+| `--anonymize` | 开关 | 关闭 | 启用资产匿名化（BTC-PERP → ASSET_A），防止 LLM 回忆历史 |
+| `--max-steps` | 整数 | 500 | 最大回测步数（每步 = 1 根 K 线） |
+| `--market` | 选项 | crypto | 市场类型：`crypto` 或 `cme` |
+| `--asset` | 字符串 | 自动 | 单品种交易代码（如 `ES`、`BTC-PERP`） |
+| `--assets` | 列表 | 无 | 多品种对比模式，空格分隔（如 `ES CL GC ZB`） |
+| `--csv-dir` | 字符串 | data | 多品种模式下 CSV 文件所在目录 |
+| `--multi-market` | 开关 | 关闭 | 跨市况对比（需先生成合成数据） |
+
+### 费用估算参考
+
+| 场景 | 参数 | DeepSeek 费用 | Claude 费用 | GPT-4o-mini 费用 |
+|------|------|-------------|------------|-----------------|
+| 快速试跑 | `--runs 1 --agents 2 --max-steps 30` | ~$0.18 | ~$2.43 | ~$0.11 |
+| 标准回测 | `--runs 3 --agents 3 --max-steps 100` | ~$2.70 | ~$36.45 | ~$1.62 |
+| 4 品种对比 | `--assets ES CL GC ZB --runs 2 --max-steps 50` | ~$3.60 | ~$48.60 | ~$2.16 |
+| 全品种深度 | `--assets ES NQ CL GC SI ZB --runs 3 --max-steps 100` | ~$16.20 | ~$218.70 | ~$9.72 |
+
+> 计算公式：`费用 = runs × agents × max_steps × decision_samples(3) × 单次调用成本`
+> 系统有 `max_cost_per_backtest_usd` 硬上限保护（默认 $50），超限自动停止。
+
+---
+
+## 配置详解
+
+### 交易成本配置（`config/trading.yaml`）
+
+**加密货币成本**（位于 `trading.crypto.costs`）：
+```yaml
+trading:
+  crypto:
+    costs:
+      slippage_bps: 5              # 滑点 5 bps = 0.05%
+      taker_fee_rate: 0.0004       # Taker 手续费 0.04%（吃单）
+      maker_fee_rate: 0.0002       # Maker 手续费 0.02%（挂单）
+      funding_rate_8h: 0.00015     # 8h 资金费率 0.015%
+      enable_costs: true           # false 可关闭（A/B 对比实验用）
+```
+
+**CME 期货成本**（位于 `trading.cme.costs`）：
 ```yaml
 trading:
   cme:
     costs:
-      slippage_bps: 2              # 比加密货币更低
-      commission_per_contract: 1.25 # 单边，美元/手
+      slippage_bps: 2              # 滑点 2 bps（比加密货币低，CME 流动性好）
+      commission_per_contract: 1.25 # 单边佣金 $1.25/手（broker-only 估算）
       enable_costs: true
-    contracts:
+    contracts:                     # 各品种合约规格
       ES: { multiplier: 50, tick_size: 0.25, tick_value: 12.50 }
+      NQ: { multiplier: 20, tick_size: 0.25, tick_value: 5.00 }
       CL: { multiplier: 1000, tick_size: 0.01, tick_value: 10.00 }
+      GC: { multiplier: 100, tick_size: 0.10, tick_value: 10.00 }
+      SI: { multiplier: 5000, tick_size: 0.005, tick_value: 25.00 }
+      ZB: { multiplier: 1000, tick_size: 0.03125, tick_value: 31.25 }
 ```
+
+### 通用交易配置
+
+```yaml
+trading:
+  market_type: "crypto"          # 全局市场类型切换："crypto" | "cme"
+
+  data_feed:
+    type: "mock"                 # "mock"（CSV 回放）| "live"（实时行情）
+    interval_seconds: 60         # 行情轮询间隔（秒）
+
+  aggregator:
+    mode: "independent"          # "independent"（独立对比）| "voting"（投票集成）
+    signal_window_seconds: 120   # 信号收集时间窗口
+    enable_debate: false         # true 启用 Bull/Bear 辩论（仅 voting 模式）
+
+  anonymize: false               # 资产匿名化（回测建议开 true）
+
+  risk:
+    global_max_drawdown_pct: 25  # 全局最大回撤限制 25%
+    global_max_daily_loss_pct: 10 # 全局单日最大亏损 10%
+```
+
+### LLM 配置（`config/llm.yaml`）
+
+```yaml
+llm:
+  provider: "deepseek"
+  model: "deepseek/deepseek-chat"
+  temperature: 0.3               # 越低越确定（0.0-1.0）
+  max_tokens: 1024               # 单次响应最大 token 数
+  timeout_seconds: 30            # 超时时间
+  retry_count: 3                 # 失败重试次数
+  retry_delay_seconds: 5         # 重试间隔
+  max_calls_per_agent_per_hour: 12  # 每 Agent 每小时最多调用 12 次
+  fallback_model: "deepseek/deepseek-chat"  # 主模型失败后的备选模型
+  decision_samples: 3            # 每次决策调 LLM 次数（1=不投票，3=三票制）
+  consensus_threshold: 0.6       # 多数票占比阈值（低于 60% 默认 HOLD）
+  max_calls_per_minute: 20       # 全局每分钟限流
+  max_cost_per_backtest_usd: 50.0  # 单次回测花费硬上限（美元）
+```
+
+### Agent 人格配置（`config/agents.yaml`）
+
+```yaml
+agents:
+  # 使用预定义原型（7 个可选）
+  - id: "agent_calm_innovator"
+    preset: "冷静创新型"           # O=90 C=80 E=25 A=20 N=10
+    initial_capital: 10000
+
+  - id: "agent_conservative"
+    preset: "保守焦虑型"           # O=15 C=85 E=20 A=70 N=90
+    initial_capital: 10000
+
+  - id: "agent_aggressive"
+    preset: "激进冒险型"           # O=85 C=20 E=80 A=15 N=10
+    initial_capital: 10000
+
+  # 也可以自定义 OCEAN 参数：
+  - id: "agent_custom_1"
+    custom:
+      name: "自定义策略型"
+      openness: 70            # 0-100
+      conscientiousness: 60
+      extraversion: 40
+      agreeableness: 30
+      neuroticism: 55
+    initial_capital: 10000
+```
+
+**可用预定义原型**：`冷静创新型`、`保守焦虑型`、`激进冒险型`、`纪律动量型`、`逆向价值型`、`平衡中庸型`、`情绪追涨型`
 
 ---
 
