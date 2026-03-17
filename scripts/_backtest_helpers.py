@@ -43,10 +43,15 @@ def validate_signal(
     data: dict, agent_id: str, profile: OceanProfile,
     constraints: TradingConstraints, price: float,
     anonymizer: AssetAnonymizer | None, prompt_hash: str, model: str,
+    confidence_scale: float = 1.0,
 ) -> TradeSignal | None:
-    """校验 LLM 输出，clip 到合法范围，构造 TradeSignal。"""
+    """校验 LLM 输出，clip 到合法范围，构造 TradeSignal。
+
+    confidence_scale: 置信度缩放因子，回测时可降低阈值（不修改公式本身）。
+    """
     action_str = data.get("action", "HOLD").upper()
     if action_str not in ("BUY", "SELL", "HOLD"):
+        logger.debug(f"[{agent_id}] 拒绝: 非法action '{action_str}'")
         return None
     asset = data.get("asset", "BTC-PERP")
     # 反匿名化
@@ -58,7 +63,12 @@ def validate_signal(
         return None
     size_pct = _clip(float(data.get("size_pct", 0)), 0, constraints.max_position_pct)
     confidence = _clip(float(data.get("confidence", 0)), 0, 1.0)
-    if confidence < constraints.min_confidence_threshold:
+    effective_threshold = constraints.min_confidence_threshold * confidence_scale
+    if confidence < effective_threshold:
+        logger.debug(
+            f"[{agent_id}] 拒绝: conf={confidence:.2f} < "
+            f"threshold={effective_threshold:.2f} "
+            f"(原={constraints.min_confidence_threshold:.2f}×{confidence_scale})")
         return None
     return TradeSignal(
         agent_id=agent_id, agent_name=profile.name,
@@ -143,15 +153,28 @@ def print_results(all_runs: list[dict[str, dict]], consistency: dict) -> None:
         table.add_column("PnL", justify="right")
         table.add_column("Sharpe", justify="right")
         table.add_column("Trades", justify="right")
+        table.add_column("Actions", justify="left")
         for aid, data in run.items():
             pnl_style = "green" if data["pnl"] > 0 else "red"
+            # 交易数：已平仓 + 未平仓标记
+            trades_str = str(data["trades"])
+            open_pos = data.get("open_pos", 0)
+            if open_pos > 0:
+                trades_str = f"{data['trades']}+{open_pos}open"
+            # 动作统计
+            action_counts = Counter(data.get("actions", []))
+            action_parts = [
+                f"{k}:{v}" for k, v in sorted(action_counts.items())
+                if k != "SKIP"
+            ]
+            action_str = " ".join(action_parts) if action_parts else "-"
             table.add_row(
                 data["name"], f"[{pnl_style}]${data['pnl']:,.2f}[/]",
-                f"{data['sharpe']:.3f}", str(data["trades"]),
+                f"{data['sharpe']:.3f}", trades_str, action_str,
             )
         console.print(table)
-    # 一致性报告（仅多次运行时展示）
-    if len(all_runs) <= 1 or not consistency:
+    # 一致性报告（有数据就展示）
+    if not consistency:
         return
     ct = Table(title="多次运行一致性报告")
     ct.add_column("Agent", style="cyan")

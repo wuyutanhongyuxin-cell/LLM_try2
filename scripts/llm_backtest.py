@@ -116,19 +116,28 @@ async def _run_agent_step(
     ]
     pv = float(account.get_portfolio_value({snapshot.asset: snapshot.price}))
     dec_prompt = generate_decision_prompt(market_data, positions_info, "", pv)
-    # 调用 LLM
+    # 调用 LLM（空响应自动重试，最多 3 次）
+    raw = ""
+    aid = agent["id"]
     try:
-        resp = await acompletion(
-            model=model, temperature=temperature, max_tokens=max_tokens,
-            messages=[
-                {"role": "system", "content": agent["sys_prompt"]},
-                {"role": "user", "content": dec_prompt},
-            ],
-        )
-        raw = resp.choices[0].message.content or ""
+        for attempt in range(3):
+            resp = await acompletion(
+                model=model, temperature=temperature, max_tokens=max_tokens,
+                messages=[
+                    {"role": "system", "content": agent["sys_prompt"]},
+                    {"role": "user", "content": dec_prompt},
+                ],
+            )
+            raw = resp.choices[0].message.content or ""
+            if raw.strip():
+                break
+            logger.warning(f"[{aid}] 空响应 (尝试 {attempt + 1}/3)")
     except Exception as e:
-        logger.error(f"[{agent['id']}] LLM 调用失败: {e}")
+        logger.error(f"[{aid}] LLM 调用失败: {e}")
         agent["actions"].append("ERROR")
+        return
+    if not raw.strip():
+        agent["actions"].append("EMPTY")
         return
     parsed = parse_llm_json(raw)
     if parsed is None:
@@ -136,9 +145,15 @@ async def _run_agent_step(
         return
     signal = validate_signal(
         parsed, agent["id"], agent["profile"], agent["constraints"],
-        snapshot.price, anonymizer, agent["prompt_hash"], model)
+        snapshot.price, anonymizer, agent["prompt_hash"], model,
+        confidence_scale=agent.get("confidence_scale", 1.0))
     if signal is None:
-        agent["actions"].append("HOLD")
+        # 区分真 HOLD 和被校验拒绝
+        llm_action = parsed.get("action", "HOLD").upper()
+        if llm_action in ("BUY", "SELL"):
+            agent["actions"].append("REJECTED")
+        else:
+            agent["actions"].append("HOLD")
     else:
         trader.execute_signal(signal)
         agent["actions"].append(signal.action.value)
@@ -157,6 +172,7 @@ async def _run_single_backtest(
     max_tokens = llm.get("max_tokens", 1024)
     rpm = llm.get("max_calls_per_minute", 20)
     sleep_between = 60.0 / rpm if rpm > 0 else 3.0
+    confidence_scale = llm.get("backtest_confidence_scale", 1.0)
     # 成本硬上限：根据模型自动估算每次调用成本
     # DeepSeek V3: $0.27/M input + $1.10/M output (来源: api-docs.deepseek.com)
     # Claude Sonnet: $3/M input + $15/M output (来源: anthropic.com/pricing)
@@ -201,14 +217,14 @@ async def _run_single_backtest(
             contracts_spec = trading_section.get("cme", {}).get("contracts", {})
             multiplier = contracts_spec.get(asset, {}).get("multiplier", 1.0)
             trader.register_agent(
-                aid, 100000.0,
+                aid, 5000000.0,
                 cme_cost_config=cme_cfg, contract_multiplier=multiplier)
         else:
-            trader.register_agent(aid, 10000.0)
+            trader.register_agent(aid, 5000000.0)
         agents.append({
             "id": aid, "profile": profile, "constraints": constraints,
             "sys_prompt": sys_prompt, "prompt_hash": get_prompt_hash(sys_prompt),
-            "actions": [],
+            "actions": [], "confidence_scale": confidence_scale,
         })
     # 步进回测主循环
     feed = MockDataFeed(csv_path=feed_path, asset=asset)
@@ -242,11 +258,13 @@ async def _run_single_backtest(
     results: dict[str, dict] = {}
     for agent in agents:
         stats = trader.get_agent_stats(agent["id"])
+        account = trader._accounts[agent["id"]]
         results[agent["id"]] = {
             "name": agent["profile"].name,
             "pnl": stats["realized_pnl"] + stats["unrealized_pnl"],
             "sharpe": stats["sharpe_ratio"],
             "trades": stats["total_trades"],
+            "open_pos": len(account.positions),
             "actions": agent["actions"],
             "cost_cap_reached": cost_cap_reached,
             "estimated_llm_cost": round(accumulated_cost, 4),
@@ -276,7 +294,7 @@ async def _run_multi_market(
             result = await _run_single_backtest(
                 profiles, csv_path, args.max_steps, args.anonymize, trading_cfg, llm_cfg)
             all_runs.append(result)
-        consistency = calc_consistency(all_runs) if len(all_runs) > 1 else {}
+        consistency = calc_consistency(all_runs)
         print_results(all_runs, consistency)
         market_results[market_name] = consistency
     # 跨市况对比
@@ -303,7 +321,7 @@ async def _run_multi_asset_comparison(
                 profiles, csv_path, args.max_steps, args.anonymize,
                 trading_cfg, llm_cfg, args.market, asset)
             all_runs.append(result)
-        consistency = calc_consistency(all_runs) if len(all_runs) > 1 else {}
+        consistency = calc_consistency(all_runs)
         print_results(all_runs, consistency)
         asset_results[asset] = consistency
     if len(asset_results) > 1:
@@ -336,7 +354,7 @@ async def main() -> None:
             profiles, args.csv, args.max_steps, args.anonymize,
             trading_cfg, llm_cfg, market, asset)
         all_runs.append(result)
-    consistency = calc_consistency(all_runs) if len(all_runs) > 1 else {}
+    consistency = calc_consistency(all_runs)
     console.print()
     print_results(all_runs, consistency)
 

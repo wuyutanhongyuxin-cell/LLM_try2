@@ -340,6 +340,22 @@ Outputs per-asset per-agent PnL/Sharpe/trades + cross-asset comparison table.
 
 ---
 
+## P6: LLM Backtest Optimization — Zero-Trade Fix
+
+Addressed 5 root causes that caused 2/3 agents (Calm Innovator, Conservative Anxious) to produce **zero trades** in backtests:
+
+| Fix | Root Cause | Severity | Solution |
+|-----|-----------|----------|----------|
+| **Confidence Scaling** | min_confidence threshold too high for DeepSeek (C=80→0.64, but LLM outputs 0.3-0.6) | Critical | `backtest_confidence_scale: 0.6` in `llm.yaml` — effective threshold = formula × 0.6 |
+| **Diagnostic Logging** | Validation failures silently swallowed as "HOLD" | High | `REJECTED` vs `HOLD` distinction + `logger.debug()` on every rejection path |
+| **Empty Response Retry** | DeepSeek ~25% empty response rate (known bug) | High | Auto-retry up to 3 times, then mark `EMPTY` |
+| **Single-Run Summary** | `--runs 1` skipped `calc_consistency()`, cross-asset table empty | Medium | Always compute consistency (single run → std=0, agreement=1.0) |
+| **Open Position Display** | Only closed trades shown, open positions invisible | Low | Trades column: `"0+1open"` format + Actions column with BUY/SELL/HOLD/REJECTED counts |
+
+Initial capital increased to **$5,000,000** per agent for more realistic CME futures sizing.
+
+---
+
 ## Three-Layer Memory System (FinMem-inspired)
 
 | Layer | Name | Content | Capacity | Storage | Retrieval |
@@ -671,6 +687,7 @@ llm:
   consensus_threshold: 0.6       # 60% vote share to act
   max_calls_per_minute: 20
   max_cost_per_backtest_usd: 50.0
+  backtest_confidence_scale: 0.6 # Backtest threshold = formula × 0.6 (fixes zero-trade agents)
 ```
 
 ### Agent Personalities (`config/agents.yaml`)
@@ -808,6 +825,14 @@ Example signal notification:
 - [x] Model-aware LLM cost estimation (DeepSeek $0.001 / Claude $0.0135 / GPT-4o-mini $0.0006)
 - [x] `--assets ES CL GC ZB` multi-asset comparison mode with cross-asset table
 - [x] `databento_feed.py` graceful ImportError handling
+
+### P6 (Complete): LLM Backtest Optimization
+- [x] Configurable confidence scaling (`backtest_confidence_scale: 0.6`) — fixes zero-trade agents
+- [x] Diagnostic logging: `REJECTED` vs `HOLD` distinction + debug logs on every rejection
+- [x] Empty LLM response auto-retry (up to 3 attempts)
+- [x] Single-run consistency calculation (no longer skipped when `--runs 1`)
+- [x] Open position display (`"0+1open"` format) + Actions statistics column
+- [x] Initial capital increased to $5M for realistic CME futures sizing
 
 ### Phase 2 (Future): Live Trading
 - [ ] Connect to real DEX (GRVT/Paradex)
