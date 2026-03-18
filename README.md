@@ -117,7 +117,7 @@ personality-trading-agents/
 │   ├── llm.yaml                 # LLM config + multi-sample + rate limiting
 │   └── market_knowledge.json    # Market causal relationship knowledge graph
 ├── src/
-│   ├── personality/             # OCEAN model, constraint mapping, prompt generation (w/ hash)
+│   ├── personality/             # OCEAN model, constraint mapping, prompt generation (w/ hash), prompt constants
 │   ├── agent/                   # Trading agent, multi-sample voting, 3-layer memory, reflection
 │   ├── market/                  # Data feeds (Mock/Live/CME Databento), technical indicators, adversarial scenarios
 │   ├── execution/               # Signal, paper trader, aggregator, risk mgr, cost model, drift monitor, debate, strategy
@@ -353,6 +353,20 @@ Addressed 5 root causes that caused 2/3 agents (Calm Innovator, Conservative Anx
 | **Open Position Display** | Only closed trades shown, open positions invisible | Low | Trades column: `"0+1open"` format + Actions column with BUY/SELL/HOLD/REJECTED counts |
 
 Initial capital increased to **$5,000,000** per agent for more realistic CME futures sizing.
+
+### P6.1: Root Cause — LLM Outputs HOLD (Not Rejected)
+
+After deploying P6, VPS backtest showed agents still had zero trades. Deeper analysis revealed the **real root cause**: LLM was choosing HOLD itself, not being rejected by confidence threshold. Actions column showed `HOLD:100`, not `REJECTED`.
+
+Three fixes applied:
+
+| Fix | Root Cause | Solution |
+|-----|-----------|----------|
+| **Logger Import** | `src/utils/logger.py` never imported — `LOG_LEVEL=DEBUG` had no effect | Explicit `import src.utils.logger` in `llm_backtest.py` |
+| **System Prompt: Decision Guidelines** | Rules section was all "Do NOT" — LLM defaulted to HOLD as safest choice | Added action-oriented guidance: "You are an ACTIVE trader", confidence calibration (0.4 sufficient), HOLD only when genuinely ambiguous |
+| **Decision Prompt: Technical Indicators** | Only price/change/volume — insufficient data for directional conviction | Inject RSI(14) with OVERSOLD/OVERBOUGHT labels, SMA(20) with price relation, MACD histogram with bullish/bearish signal |
+
+Prompt constants extracted to `prompt_constants.py` to keep `prompt_generator.py` under 200 lines.
 
 ---
 
@@ -833,6 +847,10 @@ Example signal notification:
 - [x] Single-run consistency calculation (no longer skipped when `--runs 1`)
 - [x] Open position display (`"0+1open"` format) + Actions statistics column
 - [x] Initial capital increased to $5M for realistic CME futures sizing
+- [x] Logger import fix — `LOG_LEVEL=DEBUG` now works for backtest scripts
+- [x] System Prompt Decision Guidelines — active trading directives + confidence calibration
+- [x] Decision Prompt technical indicators — RSI(14), SMA(20), MACD injected from `indicators.py`
+- [x] `prompt_constants.py` extracted from `prompt_generator.py` (file size compliance)
 
 ### Phase 2 (Future): Live Trading
 - [ ] Connect to real DEX (GRVT/Paradex)
