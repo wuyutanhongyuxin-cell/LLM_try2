@@ -21,6 +21,8 @@ from litellm import acompletion
 from loguru import logger
 from rich.console import Console
 
+import src.utils.logger as _  # noqa: F401  # 触发 loguru 自定义配置（LOG_LEVEL）
+
 from src.execution.cost_model import CMECostConfig, CostConfig
 from src.execution.paper_trader import PaperTrader
 from src.market.data_feed import MockDataFeed
@@ -28,6 +30,7 @@ from src.personality.ocean_model import PRESET_PROFILES, OceanProfile
 from src.personality.prompt_generator import (
     generate_decision_prompt, generate_system_prompt, get_prompt_hash)
 from src.personality.trait_to_constraint import ocean_to_constraints
+from src.market.indicators import calculate_macd, calculate_rsi, calculate_sma
 from src.utils.anonymizer import AssetAnonymizer
 from src.utils.config_loader import load_llm_config, load_trading_config
 
@@ -98,6 +101,7 @@ async def _run_agent_step(
     agent: dict, snapshot: object, trader: PaperTrader,
     anonymizer: AssetAnonymizer | None, model: str,
     temperature: float, max_tokens: int,
+    price_history: list[float] | None = None,
 ) -> None:
     """单个 Agent 的单步决策：构造 prompt → 调用 LLM → 校验 → 执行。"""
     market_data = {
@@ -105,6 +109,19 @@ async def _run_agent_step(
         "change_24h": snapshot.price_24h_change_pct,
         "volume": snapshot.volume_24h,
     }
+    # 注入技术指标，给 LLM 更充分的决策依据
+    if price_history and len(price_history) >= 26:
+        rsi = calculate_rsi(price_history, 14)
+        sma_20 = calculate_sma(price_history, 20)
+        macd = calculate_macd(price_history)
+        if rsi is not None:
+            market_data["rsi_14"] = round(rsi, 2)
+        if sma_20 is not None:
+            market_data["sma_20"] = round(sma_20, 2)
+            market_data["price_vs_sma"] = "above" if snapshot.price > sma_20 else "below"
+        if macd is not None:
+            market_data["macd_histogram"] = macd["histogram"]
+            market_data["macd_signal"] = "bullish" if macd["histogram"] > 0 else "bearish"
     if anonymizer:
         market_data = anonymizer.anonymize_market_data(market_data)
     # 获取持仓信息
@@ -250,7 +267,8 @@ async def _run_single_backtest(
                     f"累计 ${accumulated_cost:.2f} > ${cost_cap:.2f}，停止回测[/bold red]")
                 break
             await _run_agent_step(
-                agent, snapshot, trader, anonymizer, model, temperature, max_tokens)
+                agent, snapshot, trader, anonymizer, model, temperature, max_tokens,
+                price_history=feed._price_history)
             await asyncio.sleep(sleep_between)  # 限流
         if (step + 1) % 50 == 0:
             console.print(f"  [dim]步骤 {step + 1}/{max_steps}[/dim]")

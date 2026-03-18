@@ -10,95 +10,18 @@ Prompt 全部用英文（LLM 英文推理更准），日志和通知用中文。
 import hashlib
 
 from src.personality.ocean_model import OceanProfile
+from src.personality.prompt_constants import (
+    ROLE_TEMPLATES, TRAIT_DESC_CRYPTO, TRAIT_DESCS,
+)
 from src.personality.trait_to_constraint import TradingConstraints
 from src.utils.knowledge_graph import build_knowledge_context
-
-# ── 维度描述映射：(全名, 高分含义, 低分含义) ──
-# 按市场类型区分：crypto 和 cme 有不同的高/低分描述
-_TRAIT_DESC_CRYPTO: dict[str, tuple[str, str, str]] = {
-    "openness": (
-        "Openness",
-        "explores new altcoins, novel strategies, and high-volatility assets",
-        "sticks to BTC/ETH only, conservative and proven strategies",
-    ),
-    "conscientiousness": (
-        "Conscientiousness",
-        "strict stop-loss discipline, rigorous position sizing, rule-following",
-        "impulsive trading, may ignore risk management rules",
-    ),
-    "extraversion": (
-        "Extraversion",
-        "follows market sentiment, momentum-chasing, trend-following",
-        "contrarian, independent judgment, fades the crowd",
-    ),
-    "agreeableness": (
-        "Agreeableness",
-        "herding behavior, aligns with market consensus",
-        "challenges consensus, comfortable taking the opposite side",
-    ),
-    "neuroticism": (
-        "Neuroticism",
-        "extreme loss aversion, very tight stops, frequent cutting of losers",
-        "emotionally stable, can hold through drawdowns patiently",
-    ),
-}
-
-_TRAIT_DESC_CME: dict[str, tuple[str, str, str]] = {
-    "openness": (
-        "Openness",
-        "trades diverse futures (energy, metals, bonds), embraces cross-asset strategies",
-        "sticks to equity index futures (ES/NQ) only, conservative approach",
-    ),
-    "conscientiousness": (
-        "Conscientiousness",
-        "strict stop-loss discipline, rigorous position sizing, rule-following",
-        "impulsive trading, may ignore risk management rules",
-    ),
-    "extraversion": (
-        "Extraversion",
-        "follows institutional flow, momentum-chasing, trend-following",
-        "contrarian, independent judgment, fades the crowd",
-    ),
-    "agreeableness": (
-        "Agreeableness",
-        "herding behavior, aligns with market consensus and COT data",
-        "challenges consensus, comfortable taking the opposite side",
-    ),
-    "neuroticism": (
-        "Neuroticism",
-        "extreme loss aversion, very tight stops, frequent cutting of losers",
-        "emotionally stable, can hold through drawdowns patiently",
-    ),
-}
-
-# 市场类型 → 描述映射
-_TRAIT_DESCS: dict[str, dict[str, tuple[str, str, str]]] = {
-    "crypto": _TRAIT_DESC_CRYPTO,
-    "cme": _TRAIT_DESC_CME,
-}
-
-# 市场类型 → 角色描述
-_ROLE_TEMPLATES: dict[str, str] = {
-    "crypto": (
-        "You are a cryptocurrency perpetual futures trader with a distinct personality. "
-        "Your trading persona is '{name}'. "
-        "Your personality directly shapes how you analyze markets and make decisions."
-    ),
-    "cme": (
-        "You are a CME futures trader with a distinct personality. "
-        "You trade instruments like E-mini S&P 500 (ES), Nasdaq 100 (NQ), "
-        "Crude Oil (CL), Gold (GC), and other CME Globex contracts. "
-        "Your trading persona is '{name}'. "
-        "Your personality directly shapes how you analyze markets and make decisions."
-    ),
-}
 
 
 def _build_personality_section(
     profile: OceanProfile, market_type: str = "crypto"
 ) -> str:
     """段落2：逐维度列出分数及交易行为含义。"""
-    trait_desc = _TRAIT_DESCS.get(market_type, _TRAIT_DESC_CRYPTO)
+    trait_desc = TRAIT_DESCS.get(market_type, TRAIT_DESC_CRYPTO)
     lines: list[str] = ["## Your Personality Profile (Big Five / OCEAN)"]
     for attr, (name, high, low) in trait_desc.items():
         score: int = getattr(profile, attr)
@@ -127,7 +50,7 @@ def generate_system_prompt(
         constraints: 交易硬约束
         market_type: 市场类型 "crypto" 或 "cme"
     """
-    role_tmpl = _ROLE_TEMPLATES.get(market_type, _ROLE_TEMPLATES["crypto"])
+    role_tmpl = ROLE_TEMPLATES.get(market_type, ROLE_TEMPLATES["crypto"])
     role = role_tmpl.format(name=profile.name)
     personality = _build_personality_section(profile, market_type)
     hard = _build_constraints_section(constraints)
@@ -146,6 +69,21 @@ def generate_system_prompt(
         '- "reasoning": string (your analysis)\n'
         '- "personality_influence": string (which trait dominated this decision)'
     )
+    # 行动指引：鼓励 LLM 主动决策，避免永远 HOLD
+    action_guide = (
+        "## Decision Guidelines\n"
+        "- You are an ACTIVE trader, not a passive observer. "
+        "Analyze the data and take positions when you see opportunity.\n"
+        "- HOLD should ONLY be used when the data is genuinely ambiguous "
+        "or contradicts your trading style. Do NOT default to HOLD out of caution.\n"
+        "- If technical indicators show a clear trend (RSI oversold/overbought, "
+        "MACD crossover, price above/below SMA), you SHOULD act on it.\n"
+        "- Your personality defines HOW you trade (aggressive vs conservative sizing, "
+        "tight vs loose stops), not WHETHER you trade.\n"
+        "- Confidence calibration: 0.3-0.5 = moderate conviction (acceptable for trading), "
+        "0.5-0.7 = strong conviction, 0.7+ = very high conviction. "
+        "A confidence of 0.4 is sufficient to act."
+    )
     rules = (
         "## Rules\n"
         "- Do NOT fabricate market data or prices.\n"
@@ -154,7 +92,7 @@ def generate_system_prompt(
         "- Do NOT wrap the JSON in markdown code fences.\n"
         "You MUST respond with ONLY a valid JSON object."
     )
-    prompt = "\n\n".join([role, personality, hard, output_fmt, rules])
+    prompt = "\n\n".join([role, personality, hard, output_fmt, action_guide, rules])
     prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()[:12]
     prompt += f"\n\n[prompt_version: {prompt_hash}]"
     return prompt
@@ -181,13 +119,27 @@ def generate_decision_prompt(
     price = market_data.get("price", 0)
     change = market_data.get("change_24h", 0)
     volume = market_data.get("volume", 0)
-    market_sec = (
-        f"## Current Market Data\n"
-        f"- Asset: {asset}\n"
-        f"- Price: ${price:,.2f}\n"
-        f"- 24h Change: {change:+.2f}%\n"
-        f"- 24h Volume: ${volume:,.0f}"
-    )
+    market_lines = [
+        "## Current Market Data",
+        f"- Asset: {asset}",
+        f"- Price: ${price:,.2f}",
+        f"- 24h Change: {change:+.2f}%",
+        f"- 24h Volume: ${volume:,.0f}",
+    ]
+    # 技术指标（如果提供）
+    if "rsi_14" in market_data:
+        rsi = market_data["rsi_14"]
+        rsi_label = "OVERSOLD" if rsi < 30 else ("OVERBOUGHT" if rsi > 70 else "NEUTRAL")
+        market_lines.append(f"- RSI(14): {rsi} [{rsi_label}]")
+    if "sma_20" in market_data:
+        market_lines.append(
+            f"- SMA(20): ${market_data['sma_20']:,.2f} "
+            f"(price is {market_data.get('price_vs_sma', 'N/A')} SMA)")
+    if "macd_histogram" in market_data:
+        market_lines.append(
+            f"- MACD Histogram: {market_data['macd_histogram']:.4f} "
+            f"[{market_data.get('macd_signal', 'N/A')}]")
+    market_sec = "\n".join(market_lines)
     # 持仓
     if positions:
         pl = ["## Current Positions"]
