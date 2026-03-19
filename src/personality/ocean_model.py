@@ -2,8 +2,9 @@ from __future__ import annotations
 
 """Big Five (OCEAN) 人格模型定义。
 
-定义 OceanProfile 数据结构和 7 个预定义交易员人格原型。
-每个维度 0-100 连续分数，决定 Agent 的交易风格和风控参数。
+基于 2^5 二元组合理论（SLOAN 分类体系），每个 OCEAN 维度分为 High/Low 两级，
+穷举全部 32 种独特交易人格原型。4 个经典原型保留原始参数值以确保向后兼容。
+新增原型统一使用 H=80, L=20 作为基准分数。
 """
 
 from pydantic import BaseModel, Field
@@ -35,36 +36,61 @@ class OceanProfile(BaseModel):
     )
 
 
-# 7 个预定义人格原型，覆盖典型交易风格
+def _p(name: str, o: int, c: int, e: int, a: int, n: int) -> OceanProfile:
+    """快捷构造器，减少样板代码。"""
+    return OceanProfile(
+        name=name, openness=o, conscientiousness=c,
+        extraversion=e, agreeableness=a, neuroticism=n,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════
+# 32 个预定义人格原型（2^5 二元组合）
+# 编码: O=开放性 C=尽责性 E=外向性 A=宜人性 N=神经质
+# H=High(≥75) L=Low(≤25)  ★=经典原型（保留原始参数）
+# ═══════════════════════════════════════════════════════════════
 PRESET_PROFILES: dict[str, OceanProfile] = {
-    "冷静创新型": OceanProfile(
-        name="冷静创新型", openness=90, conscientiousness=80,
-        extraversion=25, agreeableness=20, neuroticism=10,
-    ),
-    "保守焦虑型": OceanProfile(
-        name="保守焦虑型", openness=15, conscientiousness=85,
-        extraversion=20, agreeableness=70, neuroticism=90,
-    ),
-    "激进冒险型": OceanProfile(
-        name="激进冒险型", openness=85, conscientiousness=20,
-        extraversion=80, agreeableness=15, neuroticism=10,
-    ),
-    "纪律动量型": OceanProfile(
-        name="纪律动量型", openness=50, conscientiousness=90,
-        extraversion=75, agreeableness=50, neuroticism=30,
-    ),
-    "逆向价值型": OceanProfile(
-        name="逆向价值型", openness=60, conscientiousness=75,
-        extraversion=10, agreeableness=10, neuroticism=25,
-    ),
-    "平衡中庸型": OceanProfile(
-        name="平衡中庸型", openness=50, conscientiousness=50,
-        extraversion=50, agreeableness=50, neuroticism=50,
-    ),
-    "情绪追涨型": OceanProfile(
-        name="情绪追涨型", openness=70, conscientiousness=15,
-        extraversion=90, agreeableness=80, neuroticism=75,
-    ),
+    # ── 4 个经典原型（原始参数，向后兼容，排在最前以匹配 --agents N） ──
+    "冷静创新型": _p("冷静创新型", 90, 80, 25, 20, 10),   # ★ HHLLL
+    "保守焦虑型": _p("保守焦虑型", 15, 85, 20, 70, 90),   # ★ LHLHH
+    "激进冒险型": _p("激进冒险型", 85, 20, 80, 15, 10),   # ★ HLHLL
+    "情绪追涨型": _p("情绪追涨型", 70, 15, 90, 80, 75),   # ★ HLHHH
+    # ── O↓C↓ 保守散漫系 (8型) ──────────────────────────────
+    "散漫逆风型": _p("散漫逆风型", 20, 20, 20, 20, 20),   # LLLLL
+    "焦虑叛逆型": _p("焦虑叛逆型", 20, 20, 20, 20, 80),   # LLLLH
+    "随性观望型": _p("随性观望型", 20, 20, 20, 80, 20),   # LLLHL
+    "优柔寡断型": _p("优柔寡断型", 20, 20, 20, 80, 80),   # LLLHH
+    "赌徒冲锋型": _p("赌徒冲锋型", 20, 20, 80, 20, 20),   # LLHLL
+    "神经短线型": _p("神经短线型", 20, 20, 80, 20, 80),   # LLHLH
+    "跟风散户型": _p("跟风散户型", 20, 20, 80, 80, 20),   # LLHHL
+    "恐慌跟风型": _p("恐慌跟风型", 20, 20, 80, 80, 80),   # LLHHH
+    # ── O↓C↑ 保守纪律系 (7型，保守焦虑型已列) ──────────────
+    "铁壁防守型": _p("铁壁防守型", 20, 80, 20, 20, 20),   # LHLLL
+    "谨慎狙击型": _p("谨慎狙击型", 20, 80, 20, 20, 80),   # LHLLH
+    "稳健保守型": _p("稳健保守型", 20, 80, 20, 80, 20),   # LHLHL
+    # LHLHH = 保守焦虑型（已在经典区）
+    "纪律突击型": _p("纪律突击型", 20, 80, 80, 20, 20),   # LHHLL
+    "精算套利型": _p("精算套利型", 20, 80, 80, 20, 80),   # LHHLH
+    "纪律跟随型": _p("纪律跟随型", 20, 80, 80, 80, 20),   # LHHHL
+    "风控趋势型": _p("风控趋势型", 20, 80, 80, 80, 80),   # LHHHH
+    # ── O↑C↓ 探索冲动系 (6型，激进冒险型/情绪追涨型已列) ──
+    "狂野猎手型": _p("狂野猎手型", 80, 20, 20, 20, 20),   # HLLLL
+    "偏执创新型": _p("偏执创新型", 80, 20, 20, 20, 80),   # HLLLH
+    "佛系探索型": _p("佛系探索型", 80, 20, 20, 80, 20),   # HLLHL
+    "敏感探路型": _p("敏感探路型", 80, 20, 20, 80, 80),   # HLLHH
+    # HLHLL = 激进冒险型（已在经典区）
+    "躁动投机型": _p("躁动投机型", 80, 20, 80, 20, 80),   # HLHLH
+    "乐观冲浪型": _p("乐观冲浪型", 80, 20, 80, 80, 20),   # HLHHL
+    # HLHHH = 情绪追涨型（已在经典区）
+    # ── O↑C↑ 探索纪律系 (7型，冷静创新型已列) ──────────────
+    # HHLLL = 冷静创新型（已在经典区）
+    "精密逆向型": _p("精密逆向型", 80, 80, 20, 20, 80),   # HHLLH
+    "沉稳研究型": _p("沉稳研究型", 80, 80, 20, 80, 20),   # HHLHL
+    "审慎观察型": _p("审慎观察型", 80, 80, 20, 80, 80),   # HHLHH
+    "全能主导型": _p("全能主导型", 80, 80, 80, 20, 20),   # HHHLL
+    "高压精英型": _p("高压精英型", 80, 80, 80, 20, 80),   # HHHLH
+    "完美趋势型": _p("完美趋势型", 80, 80, 80, 80, 20),   # HHHHL
+    "全面紧绷型": _p("全面紧绷型", 80, 80, 80, 80, 80),   # HHHHH
 }
 
 

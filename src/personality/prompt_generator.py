@@ -11,7 +11,7 @@ import hashlib
 
 from src.personality.ocean_model import OceanProfile
 from src.personality.prompt_constants import (
-    ROLE_TEMPLATES, TRAIT_DESC_CRYPTO, TRAIT_DESCS,
+    ASSET_DESCRIPTIONS, ROLE_TEMPLATES, TRAIT_DESC_CRYPTO, TRAIT_DESCS,
 )
 from src.personality.trait_to_constraint import TradingConstraints
 from src.utils.knowledge_graph import build_knowledge_context
@@ -56,6 +56,15 @@ def generate_system_prompt(
     hard = _build_constraints_section(constraints)
     # 资产示例根据市场类型调整
     asset_example = '"BTC-PERP"' if market_type == "crypto" else '"ES"'
+    # Fix 1: JSON 示例 + confidence 校准（DeepSeek 对完整示例响应最佳）
+    json_example = (
+        '{"action": "BUY", "asset": ' + asset_example + ', '
+        '"size_pct": 15.0, "entry_price": 6650.00, '
+        '"stop_loss_price": 6580.00, "take_profit_price": 6750.00, '
+        '"confidence": 0.55, '
+        '"reasoning": "RSI oversold at 28, MACD bullish crossover", '
+        '"personality_influence": "Low neuroticism allows holding through volatility"}'
+    )
     output_fmt = (
         "## Output Format\n"
         "You must respond with a single JSON object containing these fields:\n"
@@ -67,7 +76,8 @@ def generate_system_prompt(
         '- "take_profit_price": float\n'
         '- "confidence": float between 0 and 1\n'
         '- "reasoning": string (your analysis)\n'
-        '- "personality_influence": string (which trait dominated this decision)'
+        '- "personality_influence": string (which trait dominated this decision)\n\n'
+        f"Example response:\n{json_example}"
     )
     # 行动指引：鼓励 LLM 主动决策，避免永远 HOLD
     action_guide = (
@@ -90,6 +100,11 @@ def generate_system_prompt(
         "- Do NOT exceed any hard constraint listed above.\n"
         "- Do NOT output anything other than the JSON object.\n"
         "- Do NOT wrap the JSON in markdown code fences.\n"
+        "- If your action is BUY or SELL, confidence MUST be greater than 0. "
+        "confidence=0.0 means absolute certainty the trade will fail — "
+        "use it ONLY with HOLD.\n"
+        "- Confidence calibration: 0.3 = low conviction but tradeable, "
+        "0.5 = moderate, 0.7 = high, 0.9 = extremely high.\n"
         "You MUST respond with ONLY a valid JSON object."
     )
     prompt = "\n\n".join([role, personality, hard, output_fmt, action_guide, rules])
@@ -112,8 +127,13 @@ def generate_decision_prompt(
     positions: list,
     memory_context: str,
     portfolio_value: float,
+    max_positions: int = 6,
 ) -> str:
-    """生成 Decision Prompt（英文），每次决策循环调用。"""
+    """生成 Decision Prompt（英文），每次决策循环调用。
+
+    Args:
+        max_positions: 最大同时持仓数（用于显示持仓使用情况）
+    """
     # 行情
     asset = market_data.get("asset", "UNKNOWN")
     price = market_data.get("price", 0)
@@ -122,10 +142,16 @@ def generate_decision_prompt(
     market_lines = [
         "## Current Market Data",
         f"- Asset: {asset}",
+    ]
+    # Fix 6: 品种特化描述注入，帮助 LLM 理解非主流品种
+    asset_desc = ASSET_DESCRIPTIONS.get(asset, "")
+    if asset_desc:
+        market_lines.append(f"- Asset Context: {asset_desc}")
+    market_lines.extend([
         f"- Price: ${price:,.2f}",
         f"- 24h Change: {change:+.2f}%",
         f"- 24h Volume: ${volume:,.0f}",
-    ]
+    ])
     # 技术指标（如果提供）
     if "rsi_14" in market_data:
         rsi = market_data["rsi_14"]
@@ -152,12 +178,15 @@ def generate_decision_prompt(
         pos_sec = "\n".join(pl)
     else:
         pos_sec = "## Current Positions\nNo open positions."
-    # 资产
+    # Fix 5: 显示持仓占比，帮助 LLM 了解资金使用情况
     used = sum(p.get("size", 0) * p.get("entry_price", 0) for p in positions)
+    available = portfolio_value - used
+    avail_pct = (available / portfolio_value * 100) if portfolio_value > 0 else 0
     port_sec = (
         f"## Portfolio\n"
         f"- Total Value: ${portfolio_value:,.2f}\n"
-        f"- Available Balance: ${portfolio_value - used:,.2f}"
+        f"- Available Balance: ${available:,.2f} ({avail_pct:.1f}% of portfolio)\n"
+        f"- Positions Used: {len(positions)}/{max_positions}"
     )
     # 知识图谱上下文（在记忆之前注入）
     # 从资产标识提取知识图谱 key：BTC-PERP → BTC，ES → ES

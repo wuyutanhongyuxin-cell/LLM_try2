@@ -5,7 +5,7 @@ from __future__ import annotations
 用法: python scripts/create_agents_config.py [数量] [输出文件]
 默认: 生成 20 个随机 OCEAN 组合到 config/agents_generated.yaml
 
-包含所有 7 个预定义原型 + 随机组合，输出为 YAML 格式。
+包含所有 32 个预定义原型 + 随机组合，输出为 YAML 格式。
 """
 
 import random
@@ -23,7 +23,7 @@ DEFAULT_CAPITAL: int = 10000
 
 
 def _generate_preset_entries() -> list[dict]:
-    """生成所有 7 个预定义原型的配置条目。"""
+    """生成所有 32 个预定义原型的配置条目。"""
     entries: list[dict] = []
     for i, (name, profile) in enumerate(PRESET_PROFILES.items()):
         entry: dict = {
@@ -64,10 +64,10 @@ def _generate_random_entry(index: int) -> dict:
 
 
 def generate_config(total_count: int) -> dict:
-    """生成完整配置：7 个预定义 + N 个随机。
+    """生成完整配置：32 个预定义 + N 个随机。
 
     Args:
-        total_count: 期望的 Agent 总数（至少 7 个预定义）
+        total_count: 期望的 Agent 总数（至少 32 个预定义）
 
     Returns:
         可直接写入 YAML 的字典

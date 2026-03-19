@@ -1,24 +1,104 @@
-# Agent 人格配置（OCEAN 参数）
+# Agent 人格配置（32 个 OCEAN 二元原型）
+# 基于 2^5 Big Five 二元组合理论，完整覆盖所有人格交易风格
 agents:
+  # ── 4 个经典原型 ──
   - id: "agent_calm_innovator"
     preset: "冷静创新型"
     initial_capital: 10000
-
   - id: "agent_conservative"
     preset: "保守焦虑型"
     initial_capital: 10000
-
   - id: "agent_aggressive"
     preset: "激进冒险型"
     initial_capital: 10000
-
-  # 自定义 OCEAN 参数示例（取消注释启用）：
-  # - id: "agent_custom_1"
-  #   custom:
-  #     name: "自定义测试型"
-  #     openness: 70
-  #     conscientiousness: 60
-  #     extraversion: 40
-  #     agreeableness: 30
-  #     neuroticism: 55
-  #   initial_capital: 10000
+  - id: "agent_emotional_chaser"
+    preset: "情绪追涨型"
+    initial_capital: 10000
+  # ── O↓C↓ 保守散漫系 ──
+  - id: "agent_lazy_headwind"
+    preset: "散漫逆风型"
+    initial_capital: 10000
+  - id: "agent_anxious_rebel"
+    preset: "焦虑叛逆型"
+    initial_capital: 10000
+  - id: "agent_casual_observer"
+    preset: "随性观望型"
+    initial_capital: 10000
+  - id: "agent_indecisive"
+    preset: "优柔寡断型"
+    initial_capital: 10000
+  - id: "agent_gambler"
+    preset: "赌徒冲锋型"
+    initial_capital: 10000
+  - id: "agent_nervous_scalper"
+    preset: "神经短线型"
+    initial_capital: 10000
+  - id: "agent_retail_follower"
+    preset: "跟风散户型"
+    initial_capital: 10000
+  - id: "agent_panic_follower"
+    preset: "恐慌跟风型"
+    initial_capital: 10000
+  # ── O↓C↑ 保守纪律系 ──
+  - id: "agent_iron_defense"
+    preset: "铁壁防守型"
+    initial_capital: 10000
+  - id: "agent_cautious_sniper"
+    preset: "谨慎狙击型"
+    initial_capital: 10000
+  - id: "agent_steady_conservative"
+    preset: "稳健保守型"
+    initial_capital: 10000
+  - id: "agent_disciplined_striker"
+    preset: "纪律突击型"
+    initial_capital: 10000
+  - id: "agent_calculative_arber"
+    preset: "精算套利型"
+    initial_capital: 10000
+  - id: "agent_disciplined_follower"
+    preset: "纪律跟随型"
+    initial_capital: 10000
+  - id: "agent_risk_controlled_trend"
+    preset: "风控趋势型"
+    initial_capital: 10000
+  # ── O↑C↓ 探索冲动系 ──
+  - id: "agent_wild_hunter"
+    preset: "狂野猎手型"
+    initial_capital: 10000
+  - id: "agent_paranoid_innovator"
+    preset: "偏执创新型"
+    initial_capital: 10000
+  - id: "agent_zen_explorer"
+    preset: "佛系探索型"
+    initial_capital: 10000
+  - id: "agent_sensitive_pathfinder"
+    preset: "敏感探路型"
+    initial_capital: 10000
+  - id: "agent_restless_speculator"
+    preset: "躁动投机型"
+    initial_capital: 10000
+  - id: "agent_optimistic_surfer"
+    preset: "乐观冲浪型"
+    initial_capital: 10000
+  # ── O↑C↑ 探索纪律系 ──
+  - id: "agent_precision_contrarian"
+    preset: "精密逆向型"
+    initial_capital: 10000
+  - id: "agent_calm_researcher"
+    preset: "沉稳研究型"
+    initial_capital: 10000
+  - id: "agent_prudent_observer"
+    preset: "审慎观察型"
+    initial_capital: 10000
+  - id: "agent_all_round_dominant"
+    preset: "全能主导型"
+    initial_capital: 10000
+  - id: "agent_high_pressure_elite"
+    preset: "高压精英型"
+    initial_capital: 10000
+  - id: "agent_perfect_trend"
+    preset: "完美趋势型"
+    initial_capital: 10000
+  - id: "agent_all_high_tension"
+    preset: "全面紧绷型"
+    initial_capital: 10000

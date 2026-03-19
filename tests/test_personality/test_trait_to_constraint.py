@@ -226,7 +226,7 @@ class TestConscientiousness:
         assert c.min_confidence_threshold == 0.4
 
 
-# ── 对所有 7 个预定义原型运行映射，确保无异常 ────────────
+# ── 对所有 32 个预定义原型运行映射，确保无异常 ───────────
 
 class TestAllPresetsMapping:
     """确保全部预定义原型都能正确映射，不抛出任何异常。"""

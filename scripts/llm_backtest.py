@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """真实 LLM 回测：调用 LLM 决策循环，支持多次运行收集一致性数据。
 
-用法: python scripts/llm_backtest.py --csv data/btc_1h_2024.csv --runs 3 --agents 3
+用法: python scripts/llm_backtest.py --csv data/btc_1h_2024.csv --runs 3 --agents 32
 特性: 真实 LLM 调用 | --runs N 一致性 | --anonymize 防 bias | 限流控制
 """
 
@@ -60,7 +60,7 @@ def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="真实 LLM 回测脚本")
     p.add_argument("--csv", required=True, help="历史数据 CSV 路径")
     p.add_argument("--runs", type=int, default=3, help="重复运行次数（收集一致性）")
-    p.add_argument("--agents", type=int, default=3, help="使用前 N 个预定义原型")
+    p.add_argument("--agents", type=int, default=32, help="使用前 N 个预定义原型（共32个）")
     p.add_argument("--anonymize", action="store_true", help="启用资产匿名化")
     p.add_argument("--max-steps", type=int, default=500, help="最大回测步数")
     p.add_argument("--market", choices=["crypto", "cme"], default="crypto",
@@ -86,8 +86,8 @@ _MARKET_CONFIGS: dict[str, dict[str, list[str]]] = {
         "all_assets": ["BTC-PERP", "ETH-PERP", "SOL-PERP", "ARB-PERP", "DOGE-PERP"],
     },
     "cme": {
-        "major_assets": ["ES", "NQ"],
-        "all_assets": ["ES", "NQ", "CL", "GC", "SI", "ZB"],
+        "major_assets": ["ES", "NQ", "CL", "GC", "ZB"],  # 5 个核心 CME 品种
+        "all_assets": ["ES", "NQ", "CL", "GC", "SI", "ZB"],  # 含 SI 等扩展品种
     },
 }
 
@@ -132,7 +132,10 @@ async def _run_agent_step(
         for p in account.positions
     ]
     pv = float(account.get_portfolio_value({snapshot.asset: snapshot.price}))
-    dec_prompt = generate_decision_prompt(market_data, positions_info, "", pv)
+    # Fix 5: 传入 max_positions 让 LLM 了解持仓使用情况
+    max_pos = agent["constraints"].max_concurrent_positions
+    dec_prompt = generate_decision_prompt(
+        market_data, positions_info, "", pv, max_positions=max_pos)
     # 调用 LLM（空响应自动重试，最多 3 次）
     raw = ""
     aid = agent["id"]
@@ -160,10 +163,15 @@ async def _run_agent_step(
     if parsed is None:
         agent["actions"].append("PARSE_FAIL")
         return
+    # Fix 2 + Fix 4: 传入持仓数和持仓状态
+    current_positions = len(account.positions)
+    has_position = any(p.asset == snapshot.asset for p in account.positions)
     signal = validate_signal(
         parsed, agent["id"], agent["profile"], agent["constraints"],
         snapshot.price, anonymizer, agent["prompt_hash"], model,
-        confidence_scale=agent.get("confidence_scale", 1.0))
+        confidence_scale=agent.get("confidence_scale", 1.0),
+        current_positions=current_positions,
+        has_position=has_position)
     if signal is None:
         # 区分真 HOLD 和被校验拒绝
         llm_action = parsed.get("action", "HOLD").upper()
@@ -252,6 +260,14 @@ async def _run_single_backtest(
         if snapshot is None:
             break
         trader.update_prices({asset: snapshot.price})
+        # Fix 3: 在 Agent 决策前检查所有持仓的止损/止盈触发
+        for agent in agents:
+            acct = trader._accounts[agent["id"]]
+            events = acct.check_stop_loss_take_profit(asset, snapshot.price)
+            for ev in events:
+                logger.info(
+                    f"[{agent['id']}] {ev['reason']} {ev['asset']} "
+                    f"PnL={ev['pnl']:.2f}")
         if step > 0 and step % 24 == 0:  # 每 24 条 K 线记录日收益率
             trader.record_daily_returns()
         for agent in agents:

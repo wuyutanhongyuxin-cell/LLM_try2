@@ -5,7 +5,7 @@
 > A Multi-Agent Crypto Paper Trading System driven by Big Five (OCEAN) Personality Model
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-223%20passed-brightgreen.svg)](#)
+[![Tests](https://img.shields.io/badge/tests-253%20passed-brightgreen.svg)](#)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
@@ -93,17 +93,66 @@ min_confidence       = clip(C * 0.008, 0.2, 0.8)
 
 ---
 
-## 7 Preset Personality Archetypes
+## 32 Preset Personality Archetypes (2^5 Binary OCEAN)
 
-| Archetype | O | C | E | A | N | Trading Style |
-|-----------|---|---|---|---|---|---------------|
-| **Calm Innovator** | 90 | 80 | 25 | 20 | 10 | Explores new assets, disciplined, contrarian |
-| **Conservative Anxious** | 15 | 85 | 20 | 70 | 90 | BTC/ETH only, very tight stops, checks every 5min |
-| **Aggressive Risk-Taker** | 85 | 20 | 80 | 15 | 10 | All assets, momentum-chasing, loose risk mgmt |
-| **Disciplined Momentum** | 50 | 90 | 75 | 50 | 30 | Follows trends with strict discipline |
-| **Contrarian Value** | 60 | 75 | 10 | 10 | 25 | Fades the crowd, patient, value-focused |
-| **Balanced Moderate** | 50 | 50 | 50 | 50 | 50 | Middle-of-the-road on everything |
-| **Emotional Chaser** | 70 | 15 | 90 | 80 | 75 | FOMO-driven, herding, tight stops |
+Based on the **SLOAN personality classification** — each OCEAN dimension split into High/Low — yielding all 32 unique trading personalities. 4 classic archetypes retain original scores for backward compatibility; 28 new archetypes use H=80, L=20.
+
+### 4 Classic Archetypes (★)
+
+| Archetype | O | C | E | A | N | Code | Trading Style |
+|-----------|---|---|---|---|---|------|---------------|
+| **Calm Innovator** ★ | 90 | 80 | 25 | 20 | 10 | HHLLL | Explores new assets, disciplined, contrarian |
+| **Conservative Anxious** ★ | 15 | 85 | 20 | 70 | 90 | LHLHH | Major assets only, very tight stops, checks every 5min |
+| **Aggressive Risk-Taker** ★ | 85 | 20 | 80 | 15 | 10 | HLHLL | All assets, momentum-chasing, loose risk mgmt |
+| **Emotional Chaser** ★ | 70 | 15 | 90 | 80 | 75 | HLHHH | FOMO-driven, herding, tight stops |
+
+### O↓C↓ Conservative-Impulsive (8 types)
+
+| Archetype | O | C | E | A | N | Code | Trading Style |
+|-----------|---|---|---|---|---|------|---------------|
+| Lazy Headwind | 20 | 20 | 20 | 20 | 20 | LLLLL | No discipline, no direction, fully passive |
+| Anxious Rebel | 20 | 20 | 20 | 20 | 80 | LLLLH | Fearful contrarian, no risk control |
+| Casual Observer | 20 | 20 | 20 | 80 | 20 | LLLHL | Agreeable but passive, waits for consensus |
+| Indecisive Worrier | 20 | 20 | 20 | 80 | 80 | LLLHH | Paralyzed by fear and consensus-seeking |
+| Gambler Charger | 20 | 20 | 80 | 20 | 20 | LLHLL | Reckless momentum, no stops, calm |
+| Nervous Scalper | 20 | 20 | 80 | 20 | 80 | LLHLH | Chases momentum then panics out |
+| Retail Follower | 20 | 20 | 80 | 80 | 20 | LLHHL | Follows crowd optimistically, no discipline |
+| Panic Follower | 20 | 20 | 80 | 80 | 80 | LLHHH | Herds into trades then panic-sells |
+
+### O↓C↑ Conservative-Disciplined (7 types + 1 classic)
+
+| Archetype | O | C | E | A | N | Code | Trading Style |
+|-----------|---|---|---|---|---|------|---------------|
+| Iron Defense | 20 | 80 | 20 | 20 | 20 | LHLLL | Fortress mentality, strict rules, contrarian |
+| Cautious Sniper | 20 | 80 | 20 | 20 | 80 | LHLLH | Waits patiently, tight stops, few trades |
+| Steady Conservative | 20 | 80 | 20 | 80 | 20 | LHLHL | Safe and steady, consensus-aligned |
+| Disciplined Striker | 20 | 80 | 80 | 20 | 20 | LHHLL | Follows momentum with strict risk mgmt |
+| Calculative Arber | 20 | 80 | 80 | 20 | 80 | LHHLH | Precise entries, tight risk, anxious exit |
+| Disciplined Follower | 20 | 80 | 80 | 80 | 20 | LHHHL | Follows trends with discipline and patience |
+| Risk-Controlled Trend | 20 | 80 | 80 | 80 | 80 | LHHHH | Full risk control, follows consensus tightly |
+
+### O↑C↓ Exploratory-Impulsive (6 types + 2 classics)
+
+| Archetype | O | C | E | A | N | Code | Trading Style |
+|-----------|---|---|---|---|---|------|---------------|
+| Wild Hunter | 80 | 20 | 20 | 20 | 20 | HLLLL | Explores exotic assets, no rules, calm |
+| Paranoid Innovator | 80 | 20 | 20 | 20 | 80 | HLLLH | Tries new things but panics at drawdowns |
+| Zen Explorer | 80 | 20 | 20 | 80 | 20 | HLLHL | Curious but passive, agreeable, relaxed |
+| Sensitive Pathfinder | 80 | 20 | 20 | 80 | 80 | HLLHH | Explores cautiously, anxiety-driven exits |
+| Restless Speculator | 80 | 20 | 80 | 20 | 80 | HLHLH | High-frequency speculation with panic exits |
+| Optimistic Surfer | 80 | 20 | 80 | 80 | 20 | HLHHL | Rides trends on exotic assets, no stops |
+
+### O↑C↑ Exploratory-Disciplined (7 types + 1 classic)
+
+| Archetype | O | C | E | A | N | Code | Trading Style |
+|-----------|---|---|---|---|---|------|---------------|
+| Precision Contrarian | 80 | 80 | 20 | 20 | 80 | HHLLH | Disciplined counter-trend on diverse assets |
+| Calm Researcher | 80 | 80 | 20 | 80 | 20 | HHLHL | Deep analysis, patient, consensus-aware |
+| Prudent Observer | 80 | 80 | 20 | 80 | 80 | HHLHH | Careful, disciplined, anxiety-tempered |
+| All-Round Dominant | 80 | 80 | 80 | 20 | 20 | HHHLL | Full spectrum: explores, disciplines, leads |
+| High-Pressure Elite | 80 | 80 | 80 | 20 | 80 | HHHLH | Peak performance under stress, tight stops |
+| Perfect Trend | 80 | 80 | 80 | 80 | 20 | HHHHL | Ideal trend-follower: disciplined + calm |
+| All-High Tension | 80 | 80 | 80 | 80 | 80 | HHHHH | All dimensions high, maximum engagement |
 
 ---
 
@@ -620,7 +669,7 @@ python scripts/llm_backtest.py --csv data/btc_bull.csv --runs 3 --multi-market -
 |-----------|------|---------|-------------|
 | `--csv` | string | **required** | Historical data CSV path |
 | `--runs` | int | 3 | Number of repeated runs (for consistency metrics) |
-| `--agents` | int | 3 | Number of preset personality archetypes to use |
+| `--agents` | int | 32 | Number of preset personality archetypes to use (32 total) |
 | `--anonymize` | flag | off | Enable asset anonymization (BTC-PERP → ASSET_A) |
 | `--max-steps` | int | 500 | Max backtest steps (1 step = 1 candle) |
 | `--market` | choice | crypto | Market type: `crypto` or `cme` |
@@ -749,7 +798,7 @@ agents:
 | Logging | loguru | Structured, colored output |
 | Dashboard | rich | Terminal UI |
 | CME Data | `databento` | Databento API for CME futures OHLCV |
-| Testing | pytest + pytest-asyncio | 223 tests, full coverage |
+| Testing | pytest + pytest-asyncio | 253 tests, full coverage |
 
 **Intentionally excluded**: pandas, numpy, django, flask, sqlalchemy (keeping it lightweight).
 
@@ -780,7 +829,7 @@ Example signal notification:
 ## Development Roadmap
 
 ### Phase 1 (Complete): Paper Trading Validation
-- [x] OCEAN personality model + 7 archetypes
+- [x] OCEAN personality model + 32 archetypes (2^5 binary SLOAN coverage)
 - [x] Deterministic constraint mapping
 - [x] LLM-driven decision loop with hard constraint enforcement
 - [x] 3-layer memory system (relevance retrieval + decay)

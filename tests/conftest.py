@@ -20,7 +20,7 @@ GLOBAL_CONFIG: dict[str, list[str]] = {
 # ── CME 期货资产配置 ──────────────────────────────────────
 
 CME_GLOBAL_CONFIG: dict[str, list[str]] = {
-    "major_assets": ["ES", "NQ"],
+    "major_assets": ["ES", "NQ", "CL", "GC", "ZB"],
     "all_assets": ["ES", "NQ", "CL", "GC", "SI", "ZB"],
 }
 

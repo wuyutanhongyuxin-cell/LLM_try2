@@ -44,10 +44,14 @@ def validate_signal(
     constraints: TradingConstraints, price: float,
     anonymizer: AssetAnonymizer | None, prompt_hash: str, model: str,
     confidence_scale: float = 1.0,
+    current_positions: int = 0,
+    has_position: bool = True,
 ) -> TradeSignal | None:
     """校验 LLM 输出，clip 到合法范围，构造 TradeSignal。
 
     confidence_scale: 置信度缩放因子，回测时可降低阈值（不修改公式本身）。
+    current_positions: 当前持仓数量，用于检查 max_concurrent_positions。
+    has_position: 是否有该资产的持仓，SELL 时需要。
     """
     action_str = data.get("action", "HOLD").upper()
     if action_str not in ("BUY", "SELL", "HOLD"):
@@ -57,6 +61,16 @@ def validate_signal(
     # 反匿名化
     if anonymizer:
         asset = anonymizer.deanonymize_asset(asset)
+    # Fix 4: SELL 前检查是否有持仓
+    if action_str == "SELL" and not has_position:
+        logger.debug(f"[{agent_id}] 拒绝: SELL 但无 {asset} 持仓")
+        return None
+    # Fix 2: 检查持仓数量是否已满
+    if action_str == "BUY" and current_positions >= constraints.max_concurrent_positions:
+        logger.debug(
+            f"[{agent_id}] 拒绝: 持仓已满 "
+            f"{current_positions}/{constraints.max_concurrent_positions}")
+        return None
     # 非允许资产的买入 → 拒绝
     if action_str == "BUY" and asset not in constraints.allowed_assets:
         logger.info(f"[{agent_id}] 拒绝买入非允许资产: {asset}")

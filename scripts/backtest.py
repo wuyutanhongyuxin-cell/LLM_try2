@@ -34,8 +34,8 @@ _MARKET_CONFIGS: dict[str, dict[str, list[str]]] = {
         "all_assets": ["BTC-PERP", "ETH-PERP", "SOL-PERP", "ARB-PERP", "DOGE-PERP"],
     },
     "cme": {
-        "major_assets": ["ES", "NQ"],
-        "all_assets": ["ES", "NQ", "CL", "GC", "SI", "ZB"],
+        "major_assets": ["ES", "NQ", "CL", "GC", "ZB"],  # 5 个核心 CME 品种
+        "all_assets": ["ES", "NQ", "CL", "GC", "SI", "ZB"],  # 含 SI 等扩展品种
     },
 }
 

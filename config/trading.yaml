@@ -21,7 +21,7 @@ trading:
   # ── CME 期货市场（Databento 数据源）──
   cme:
     assets:
-      major: ["ES", "NQ"]
+      major: ["ES", "NQ", "CL", "GC", "ZB"]  # 5 个核心品种，Low-O Agent 可交易
       all: ["ES", "NQ", "CL", "GC", "SI", "ZB"]
     data_feed:
       source: "databento"

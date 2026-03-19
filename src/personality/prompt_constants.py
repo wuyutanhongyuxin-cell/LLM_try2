@@ -67,6 +67,21 @@ TRAIT_DESCS: dict[str, dict[str, tuple[str, str, str]]] = {
 }
 
 # 市场类型 → 角色描述
+# 品种描述映射：帮助 LLM 理解不同资产特性，减少因"不了解品种"输出 conf=0.0
+ASSET_DESCRIPTIONS: dict[str, str] = {
+    "ES": "E-mini S&P 500 index futures, tracks US large-cap equities",
+    "NQ": "E-mini Nasdaq 100 futures, tracks US tech-heavy equities",
+    "CL": "WTI Crude Oil futures, highly volatile commodity driven by OPEC and inventory data",
+    "GC": "Gold futures, safe-haven asset inversely correlated with USD and rates",
+    "ZB": "US Treasury Bond futures, inversely correlated with interest rates",
+    "SI": "Silver futures, tracks gold with higher beta (~1.5x)",
+    "BTC-PERP": "Bitcoin perpetual futures, highest crypto market cap",
+    "ETH-PERP": "Ethereum perpetual futures, second largest crypto",
+    "SOL-PERP": "Solana perpetual futures, high-performance L1 blockchain",
+    "ARB-PERP": "Arbitrum perpetual futures, Ethereum L2 scaling solution",
+    "DOGE-PERP": "Dogecoin perpetual futures, meme coin with high retail interest",
+}
+
 ROLE_TEMPLATES: dict[str, str] = {
     "crypto": (
         "You are a cryptocurrency perpetual futures trader with a distinct personality. "
