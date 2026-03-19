@@ -5,7 +5,7 @@
 > A Multi-Agent Crypto Paper Trading System driven by Big Five (OCEAN) Personality Model
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-253%20passed-brightgreen.svg)](#)
+[![Tests](https://img.shields.io/badge/tests-258%20passed-brightgreen.svg)](#)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
@@ -173,7 +173,7 @@ personality-trading-agents/
 │   ├── integration/             # Redis pub/sub, Telegram (signals + drift alerts + cost reports)
 │   ├── utils/                   # Config loader, logger, asset anonymizer, trade logger, TF-IDF, knowledge graph
 │   └── main.py                  # System entry point
-├── tests/                       # 253 tests covering all modules
+├── tests/                       # 258 tests covering all modules
 ├── scripts/
 │   ├── dashboard.py             # Rich terminal real-time dashboard
 │   ├── backtest.py              # Rule-based historical backtesting
@@ -444,6 +444,74 @@ if action_str in ("BUY", "SELL") and confidence == 0.0:
 ```
 
 This ensures all 32 agents can trade across all 4 CME assets (ES/CL/GC/ZB), not just the 3 high-O agents that worked before.
+
+---
+
+## P8: 32→24 Agent Screening
+
+Completed Phase 2 screening: 32 agents × 100 steps × 4 CME assets (ES/CL/GC/ZB). Eliminated 8 zero-trade/duplicate agents, retaining **24** for Phase 3 deep backtesting.
+
+### Screening Criteria
+
+| Criteria | Description |
+|----------|-------------|
+| **Eliminated** | Zero trades across all 4 assets, or behavior identical to another agent |
+| **Tier A** | Combined PnL ≥ +$20,000 across 4 assets — strong profitability |
+| **Tier B** | Combined PnL > $0 with unique OCEAN combination representativeness |
+| **Tier C** | Combined PnL ≤ $0 — retained as control group for observation |
+
+### Retained Agents (24)
+
+```
+┌────────┬────────────────────┬─────────────┬───────────┬─────────────────────────────────────┐
+│  Tier  │      Agent         │ 4-Asset Sum │ Coverage  │           Retention Reason          │
+├────────┼────────────────────┼─────────────┼───────────┼─────────────────────────────────────┤
+│ Tier A │ Aggressive Risk    │ +$34,620    │ 3/4       │ Highest PnL                         │
+│ Tier A │ Emotional FOMO     │ +$30,339    │ 4/4       │ Only all-asset trader with big gains │
+│ Tier A │ Optimistic Surfer  │ +$28,886    │ 3/4       │ Only ES-profitable, cross-asset      │
+│ Tier A │ Zen Explorer       │ +$24,283    │ 2/4       │ Precision CL strike                  │
+│ Tier A │ Dominant All-Round │ +$24,283    │ 2/4       │ High-O High-C representative         │
+├────────┼────────────────────┼─────────────┼───────────┼─────────────────────────────────────┤
+│ Tier B │ Gambler Rush       │ +$16,017    │ 2/4       │ Low-O Low-C control group            │
+│ Tier B │ Perfect Trend      │ +$12,816    │ 2/4       │ All-high + low-N                     │
+│ Tier B │ Precision Contrarian│ +$7,189    │ 4/4       │ Contrarian strategy, 4-asset active   │
+│ Tier B │ Cautious Observer  │ +$5,245     │ 4/4       │ High-C High-N representative         │
+│ Tier B │ High-Pressure Elite│ +$2,970     │ 4/4       │ Full high-pressure type               │
+│ Tier B │ Full Intensity     │ +$3,646     │ 4/4       │ All-high control                     │
+│ Tier B │ Anxious Rebel      │ +$2,485     │ 4/4       │ All-low + high-N, fear-driven        │
+│ Tier B │ Sensitive Explorer │ +$2,311     │ 4/4       │ High-O Low-C High-N                  │
+├────────┼────────────────────┼─────────────┼───────────┼─────────────────────────────────────┤
+│ Tier C │ Conservative Anxious│ +$117      │ 2/4       │ Classic archetype, most conservative │
+│ Tier C │ Panic Follower     │ -$833       │ 3/4       │ Low-C High-E High-A High-N           │
+│ Tier C │ Paranoid Innovator │ -$2,558     │ 4/4       │ High activity control                │
+│ Tier C │ Manic Speculator   │ -$6,241     │ 4/4       │ Highest frequency control group      │
+│ Tier C │ Nervous Scalper    │ -$815       │ 3/4       │ Low-O Low-C High-E High-N            │
+│ Tier C │ Cautious Sniper    │ -$506       │ 3/4       │ Low-O High-C High-N                  │
+│ Tier C │ Quant Arbitrage    │ -$459       │ 3/4       │ Low-O High-C High-E High-N           │
+│ Tier C │ Risk-Ctrl Trend    │ -$708       │ 3/4       │ Low-O High-C High-E High-A High-N    │
+│ Tier C │ Indecisive         │ -$870       │ 2/4       │ Low-O Low-C High-A High-N            │
+│ Tier C │ Calm Innovator     │ -$350       │ 1/4       │ Classic archetype, kept for obs       │
+│ Tier C │ Steady Conservative│ -$292       │ 1/4       │ Low-O High-C Low-N representative    │
+└────────┴────────────────────┴─────────────┴───────────┴─────────────────────────────────────┘
+```
+
+### Key Findings
+
+| Observation | Detail |
+|-------------|--------|
+| **High O dominates** | 4 of 5 Tier A agents have O≥70 — exploratory personality excels in multi-asset CME |
+| **Low C ≠ loss** | Aggressive Risk (C=20) takes #1 PnL — low discipline but heavy bets pay off |
+| **High N is a double-edged sword** | Emotional FOMO (N=75) is Tier A, but Manic Speculator (N=80) has the worst Tier C loss |
+| **Coverage paradox** | Tier A averages 3/4 assets; Tier C has higher coverage (more trades = more losses) |
+
+### Next: Phase 3 Batch Deep Backtest
+
+| Batch | Agents | Scope | Est. Time |
+|-------|--------|-------|-----------|
+| Batch 1 | 13 (Tier A+B) | 200 steps × 4 assets | ~18h |
+| Batch 2 | 11 (Tier C) | 200 steps × 4 assets | ~15h |
+
+After completion, further narrow down to **6~8 agents** for long-run validation.
 
 ---
 
@@ -826,7 +894,7 @@ agents:
 | Logging | loguru | Structured, colored output |
 | Dashboard | rich | Terminal UI |
 | CME Data | `databento` | Databento API for CME futures OHLCV |
-| Testing | pytest + pytest-asyncio | 253 tests, full coverage |
+| Testing | pytest + pytest-asyncio | 258 tests, full coverage |
 
 **Intentionally excluded**: pandas, numpy, django, flask, sqlalchemy (keeping it lightweight).
 
@@ -939,6 +1007,13 @@ Example signal notification:
 - [x] Asset descriptions injection (`ASSET_DESCRIPTIONS` in decision prompt)
 - [x] Portfolio context enhancement (balance %, positions used)
 - [x] CME `major_assets` expanded to 5 contracts (all agents can trade all assets)
+
+### P8 (In Progress): 32→24 Agent Screening
+- [x] Phase 2 screening: 32 agents × 100 steps × 4 CME assets (ES/CL/GC/ZB)
+- [x] Eliminated 8 zero-trade/duplicate agents, retained 24 (Tier A: 5 + Tier B: 8 + Tier C: 11)
+- [x] Tier A champions: Aggressive Risk +$34,620, Emotional FOMO +$30,339
+- [ ] Phase 3 deep backtest: 24 agents × 200 steps × 4 assets (A+B batch ~18h / C batch ~15h)
+- [ ] Final selection: narrow to 6~8 agents for long-run validation
 
 ### Phase 2 (Future): Live Trading
 - [ ] Connect to real DEX (GRVT/Paradex)
