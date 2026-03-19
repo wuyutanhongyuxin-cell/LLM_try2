@@ -168,8 +168,8 @@ personality-trading-agents/
 ├── src/
 │   ├── personality/             # OCEAN model, constraint mapping, prompt generation (w/ hash), prompt constants
 │   ├── agent/                   # Trading agent, multi-sample voting, 3-layer memory, reflection
-│   ├── market/                  # Data feeds (Mock/Live/CME Databento), technical indicators, adversarial scenarios
-│   ├── execution/               # Signal, paper trader, aggregator, risk mgr, cost model, drift monitor, debate, strategy
+│   ├── market/                  # Data feeds (Mock/Live/CME Databento/Lighter DEX), indicators, adversarial
+│   ├── execution/               # Signal, paper trader, Lighter executor, aggregator, risk, cost, drift, debate
 │   ├── integration/             # Redis pub/sub, Telegram (signals + drift alerts + cost reports)
 │   ├── utils/                   # Config loader, logger, asset anonymizer, trade logger, TF-IDF, knowledge graph
 │   └── main.py                  # System entry point
@@ -178,6 +178,7 @@ personality-trading-agents/
 │   ├── dashboard.py             # Rich terminal real-time dashboard
 │   ├── backtest.py              # Rule-based historical backtesting
 │   ├── llm_backtest.py          # Real LLM backtesting with consistency metrics + multi-market
+│   ├── live_lighter.py          # Lighter DEX single-agent live trading entry point
 │   ├── generate_synthetic_data.py # Generate synthetic bear/sideways/bull CSV data
 │   ├── export_training_data.py  # Export decision traces as JSONL for LLM fine-tuning
 │   ├── create_agents_config.py  # Bulk config generation
@@ -1021,6 +1022,16 @@ Example signal notification:
 - [ ] Sentiment data sources (Twitter/Telegram)
 - [ ] Voting mode live validation
 - [ ] RL strategy replacing RuleBasedStrategy
+
+### P9 (In Progress): Lighter DEX Live Trading
+- [x] Lighter WS real-time data feed (`lighter_feed.py`) — BBO → MarketSnapshot
+- [x] Lighter live executor (`lighter_executor.py`) — IOC market orders via SDK
+- [x] Single-agent live entry script (`live_lighter.py`) — dry-run + live modes
+- [x] Lighter config (`config/lighter.yaml`) — ticker, position limits, costs
+- [x] 26 unit tests for feed + executor
+- [ ] Multi-agent live mode
+- [ ] WebSocket fill confirmation integration
+- [ ] Live performance dashboard
 
 ---
 

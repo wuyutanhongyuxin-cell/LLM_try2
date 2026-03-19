@@ -1,0 +1,13 @@
+# Lighter DEX 实盘交易配置
+lighter:
+  ticker: "BTC"
+  default_interval_seconds: 300    # 决策间隔默认5分钟
+  max_position_btc: 0.01           # 最大仓位（BTC）
+  ioc_slippage_pct: 0.002          # IOC 滑点 0.2%
+  fill_timeout_seconds: 3          # 填单确认超时
+  min_balance_usd: 10              # 最低余额警戒
+  max_consecutive_losses: 5        # 连续亏损暂停阈值
+  costs:
+    taker_fee_rate: 0              # Lighter 0% taker fee
+    slippage_bps: 2                # 预估滑点（基点）
+    enable_costs: true

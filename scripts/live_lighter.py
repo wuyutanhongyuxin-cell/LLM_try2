@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""Lighter DEX 单 Agent 实盘入口。
+
+用法:
+    python scripts/live_lighter.py --agent "乐观冲浪型" --ticker BTC --dry-run
+    python scripts/live_lighter.py --agent "乐观冲浪型" --capital 50 --max-position 0.001
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import os
+import sys
+from decimal import Decimal
+
+from dotenv import load_dotenv
+from loguru import logger
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from src.execution.lighter_executor import LighterExecutor
+from src.execution.signal import TradeSignal
+from src.integration.redis_bus import RedisBus
+from src.integration.telegram_notifier import TelegramNotifier
+from src.market.lighter_feed import LighterLiveDataFeed
+from src.personality.ocean_model import get_profile
+from src.personality.trait_to_constraint import derive_constraints
+from src.utils.config_loader import load_llm_config, load_yaml
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Lighter DEX 单 Agent 实盘")
+    p.add_argument("--agent", default="乐观冲浪型", help="Agent 人格原型名称")
+    p.add_argument("--ticker", default="BTC", help="交易对")
+    p.add_argument("--capital", type=float, default=100.0, help="标记资本 USD")
+    p.add_argument("--interval", type=int, default=0, help="决策间隔秒数（0=用配置）")
+    p.add_argument("--max-position", type=float, default=0.0, help="最大仓位 BTC")
+    p.add_argument("--dry-run", action="store_true", help="只看信号不下单")
+    return p.parse_args()
+
+
+async def resolve_market_index(ticker: str) -> int:
+    """通过 Lighter API 查询 ticker 对应的 market_index。"""
+    import lighter as sdk
+    api = sdk.ApiClient(configuration=sdk.Configuration(
+        host="https://mainnet.zklighter.elliot.ai",
+    ))
+    order_api = sdk.OrderApi(api)
+    obs = await order_api.order_books()
+    await api.close()
+    for m in obs.order_books:
+        if m.symbol == ticker:
+            return m.market_id
+    raise RuntimeError(f"Lighter 找不到 ticker: {ticker}")
+
+
+async def decision_loop(
+    feed: LighterLiveDataFeed, executor: LighterExecutor,
+    redis_bus: RedisBus, telegram: TelegramNotifier,
+    llm_config: dict, profile_name: str, interval: int, capital: float,
+) -> None:
+    """Agent 决策主循环：行情→LLM决策→实盘执行→通知。"""
+    from src.agent.trading_agent import TradingAgent, _snapshot_to_dict
+    from src.personality.prompt_generator import generate_decision_prompt
+
+    profile = get_profile(profile_name)
+    constraints = derive_constraints(profile)
+    agent = TradingAgent(
+        agent_id=f"live_{profile_name}", profile=profile,
+        constraints=constraints, llm_config=llm_config,
+        market_feed=feed, redis_bus=redis_bus,
+    )
+    agent._portfolio_value = Decimal(str(capital))
+    asset = constraints.allowed_assets[0]
+
+    while True:
+        try:
+            snapshot = await feed.get_latest(asset)
+            if snapshot is None:
+                await asyncio.sleep(interval)
+                continue
+            # LLM 决策
+            ctx = await agent._memory.get_context_for_decision(asset, "")
+            prompt = generate_decision_prompt(
+                _snapshot_to_dict(snapshot), agent._positions,
+                ctx, float(agent._portfolio_value),
+            )
+            n = llm_config.get("decision_samples", 3)
+            thr = llm_config.get("consensus_threshold", 0.6)
+            if n <= 1:
+                raw = await agent._call_llm(prompt)
+                sig = agent._validate_signal(raw, snapshot) if raw else None
+            else:
+                sig = await agent._multi_sample_decision(prompt, snapshot, n, thr)
+            if sig is None:
+                logger.info(f"[{profile_name}] HOLD")
+                await asyncio.sleep(interval)
+                continue
+            # 执行
+            mid = feed.get_mid_price() or Decimal(str(snapshot.price))
+            ok = await executor.execute_signal(sig, mid)
+            if ok:
+                await telegram.notify_signal(sig)
+                agent._memory.add_trade_result(sig.model_dump())
+                await agent._memory.save_trade_to_l2(sig.model_dump())
+                agent._trade_count += 1
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error(f"[{profile_name}] 循环异常: {exc}")
+        await asyncio.sleep(interval)
+
+
+async def main() -> None:
+    args = parse_args()
+    load_dotenv()
+    lighter_cfg = load_yaml("lighter.yaml").get("lighter", {})
+    llm_cfg = load_llm_config().get("llm", {})
+    ticker = args.ticker or lighter_cfg.get("ticker", "BTC")
+    interval = args.interval or lighter_cfg.get("default_interval_seconds", 300)
+    max_pos = Decimal(str(args.max_position or lighter_cfg.get("max_position_btc", 0.01)))
+    profile = get_profile(args.agent)
+
+    market_index = await resolve_market_index(ticker)
+    feed = LighterLiveDataFeed(market_index, f"{ticker}-PERP")
+    executor = LighterExecutor(
+        account_index=int(os.environ.get("LIGHTER_ACCOUNT_INDEX", "0")),
+        api_key_index=int(os.environ.get("LIGHTER_API_KEY_INDEX", "0")),
+        max_position=max_pos,
+        fill_timeout=lighter_cfg.get("fill_timeout_seconds", 3.0),
+        min_balance=Decimal(str(lighter_cfg.get("min_balance_usd", 10))),
+        dry_run=args.dry_run,
+    )
+    redis_bus = RedisBus(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+    telegram = TelegramNotifier()
+
+    try:
+        await feed.connect()
+        await executor.connect(ticker)
+        await redis_bus.connect()
+        await telegram.initialize()
+    except Exception as e:
+        logger.error(f"初始化失败: {e}")
+        return
+
+    mode = "DRY-RUN" if args.dry_run else "LIVE"
+    msg = (
+        f"🚀 Lighter [{mode}] | {args.agent} "
+        f"(O{profile.openness}/C{profile.conscientiousness}"
+        f"/E{profile.extraversion}/A{profile.agreeableness}"
+        f"/N{profile.neuroticism}) | {ticker} {interval}s"
+    )
+    logger.info(msg)
+    await telegram.send_message(msg)
+
+    task = asyncio.create_task(decision_loop(
+        feed, executor, redis_bus, telegram,
+        llm_cfg, args.agent, interval, args.capital,
+    ))
+    try:
+        await asyncio.Event().wait()  # 永久等待，直到 Ctrl+C
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        logger.info("收到退出信号")
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    # 平仓并断开
+    ok = await executor.close_all_positions()
+    await telegram.send_message(f"🛑 停止 | 平仓{'成功' if ok else '失败'}")
+    await feed.disconnect()
+    await executor.disconnect()
+    await redis_bus.close()
+    await telegram.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
