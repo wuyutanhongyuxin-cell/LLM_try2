@@ -163,6 +163,11 @@ async def _run_agent_step(
     if parsed is None:
         agent["actions"].append("PARSE_FAIL")
         return
+    # 诊断日志：打印 LLM 原始输出的 action + confidence
+    logger.debug(
+        f"[{aid}] LLM原始: action={parsed.get('action','?')} "
+        f"conf={parsed.get('confidence','?')} "
+        f"reason={str(parsed.get('reasoning',''))[:60]}")
     # Fix 2 + Fix 4: 传入持仓数和持仓状态
     current_positions = len(account.positions)
     has_position = any(p.asset == snapshot.asset for p in account.positions)
