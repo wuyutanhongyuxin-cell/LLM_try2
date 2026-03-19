@@ -7,6 +7,7 @@ import pytest
 from src.utils.anonymizer import AssetAnonymizer
 
 ASSETS = ["BTC-PERP", "ETH-PERP", "SOL-PERP"]
+CME_ASSETS = ["ES", "NQ", "CL", "GC", "SI", "ZB"]
 
 
 @pytest.fixture()
@@ -63,3 +64,51 @@ class TestAnonymize:
         assert "ASSET_A" in anonymized
         assert "ASSET_B" in anonymized
         assert "ASSET_C" in anonymized
+
+
+class TestCMEAnonymize:
+    """CME 品种匿名化测试——验证短名称不误替换指标名。"""
+
+    @pytest.fixture()
+    def cme_anon(self) -> AssetAnonymizer:
+        """CME 品种匿名化器。"""
+        return AssetAnonymizer(CME_ASSETS)
+
+    def test_si_does_not_break_rsi(self, cme_anon: AssetAnonymizer) -> None:
+        """SI（白银）的替换不应破坏 RSI 指标名。"""
+        text = "RSI(14) = 35.2, oversold signal on SI"
+        result = cme_anon.anonymize(text)
+        assert "RSI(14)" in result, f"RSI 被误替换: {result}"
+        assert "SI" not in result.replace("RSI", "")  # 独立的 SI 应被替换
+
+    def test_es_does_not_break_prices(self, cme_anon: AssetAnonymizer) -> None:
+        """ES 不应破坏 prices、closes 等英文单词。"""
+        text = "ES closes at 5900, resistance level"
+        result = cme_anon.anonymize(text)
+        assert "closes" in result, f"closes 被误替换: {result}"
+
+    def test_cl_does_not_break_close(self, cme_anon: AssetAnonymizer) -> None:
+        """CL 不应破坏 close 等英文单词。"""
+        text = "CL is near close price 72.50"
+        result = cme_anon.anonymize(text)
+        assert "close" in result, f"close 被误替换: {result}"
+
+    def test_cme_roundtrip(self, cme_anon: AssetAnonymizer) -> None:
+        """CME 品种匿名化→反匿名化应恢复原文中出现的资产名。"""
+        text = "Buy ES at 5900, sell GC at 2400, SI at 28"
+        present_assets = ["ES", "GC", "SI"]
+        anonymized = cme_anon.anonymize(text)
+        for asset in present_assets:
+            assert asset not in anonymized, f"{asset} 未被匿名化"
+        restored = cme_anon.deanonymize(anonymized)
+        for asset in present_assets:
+            assert asset in restored, f"{asset} 未被还原"
+
+    def test_rsi_sma_macd_preserved(self, cme_anon: AssetAnonymizer) -> None:
+        """技术指标名 RSI、SMA、MACD 不应被任何 CME 品种替换破坏。"""
+        text = "RSI=28 MACD bullish SMA(20)=5850 ES trading"
+        result = cme_anon.anonymize(text)
+        assert "RSI=28" in result
+        assert "MACD" in result
+        assert "SMA(20)" in result
+        assert "ES" not in result  # ES 应被替换
