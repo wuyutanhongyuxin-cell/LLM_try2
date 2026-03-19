@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import signal
 import sys
 from decimal import Decimal
 
@@ -19,13 +20,12 @@ from loguru import logger
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.execution.lighter_executor import LighterExecutor
-from src.execution.signal import TradeSignal
 from src.integration.redis_bus import RedisBus
 from src.integration.telegram_notifier import TelegramNotifier
 from src.market.lighter_feed import LighterLiveDataFeed
 from src.personality.ocean_model import get_profile
-from src.personality.trait_to_constraint import derive_constraints
-from src.utils.config_loader import load_llm_config, load_yaml
+from src.personality.trait_to_constraint import ocean_to_constraints
+from src.utils.config_loader import load_llm_config, load_trading_config, load_yaml
 
 
 def parse_args() -> argparse.Namespace:
@@ -37,6 +37,21 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-position", type=float, default=0.0, help="最大仓位 BTC")
     p.add_argument("--dry-run", action="store_true", help="只看信号不下单")
     return p.parse_args()
+
+
+def _build_asset_config(ticker: str) -> dict[str, list[str]]:
+    """构建 ocean_to_constraints 所需的 global_config。"""
+    asset_perp = f"{ticker}-PERP"
+    try:
+        trading_cfg = load_trading_config()
+        crypto = trading_cfg.get("trading", {}).get("crypto", {})
+        assets = crypto.get("assets", {})
+        return {
+            "major_assets": assets.get("major", [asset_perp]),
+            "all_assets": assets.get("all", [asset_perp]),
+        }
+    except Exception:
+        return {"major_assets": [asset_perp], "all_assets": [asset_perp]}
 
 
 async def resolve_market_index(ticker: str) -> int:
@@ -57,14 +72,15 @@ async def resolve_market_index(ticker: str) -> int:
 async def decision_loop(
     feed: LighterLiveDataFeed, executor: LighterExecutor,
     redis_bus: RedisBus, telegram: TelegramNotifier,
-    llm_config: dict, profile_name: str, interval: int, capital: float,
+    llm_config: dict, profile_name: str, interval: int,
+    capital: float, asset_config: dict,
 ) -> None:
     """Agent 决策主循环：行情→LLM决策→实盘执行→通知。"""
     from src.agent.trading_agent import TradingAgent, _snapshot_to_dict
     from src.personality.prompt_generator import generate_decision_prompt
 
     profile = get_profile(profile_name)
-    constraints = derive_constraints(profile)
+    constraints = ocean_to_constraints(profile, asset_config)
     agent = TradingAgent(
         agent_id=f"live_{profile_name}", profile=profile,
         constraints=constraints, llm_config=llm_config,
@@ -79,7 +95,6 @@ async def decision_loop(
             if snapshot is None:
                 await asyncio.sleep(interval)
                 continue
-            # LLM 决策
             ctx = await agent._memory.get_context_for_decision(asset, "")
             prompt = generate_decision_prompt(
                 _snapshot_to_dict(snapshot), agent._positions,
@@ -96,7 +111,6 @@ async def decision_loop(
                 logger.info(f"[{profile_name}] HOLD")
                 await asyncio.sleep(interval)
                 continue
-            # 执行
             mid = feed.get_mid_price() or Decimal(str(snapshot.price))
             ok = await executor.execute_signal(sig, mid)
             if ok:
@@ -120,6 +134,7 @@ async def main() -> None:
     interval = args.interval or lighter_cfg.get("default_interval_seconds", 300)
     max_pos = Decimal(str(args.max_position or lighter_cfg.get("max_position_btc", 0.01)))
     profile = get_profile(args.agent)
+    asset_config = _build_asset_config(ticker)
 
     market_index = await resolve_market_index(ticker)
     feed = LighterLiveDataFeed(market_index, f"{ticker}-PERP")
@@ -153,26 +168,32 @@ async def main() -> None:
     logger.info(msg)
     await telegram.send_message(msg)
 
+    # Ctrl+C 优雅退出：设置 shutdown_event
+    shutdown_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, shutdown_event.set)
+
     task = asyncio.create_task(decision_loop(
         feed, executor, redis_bus, telegram,
-        llm_cfg, args.agent, interval, args.capital,
+        llm_cfg, args.agent, interval, args.capital, asset_config,
     ))
-    try:
-        await asyncio.Event().wait()  # 永久等待，直到 Ctrl+C
-    except (KeyboardInterrupt, asyncio.CancelledError):
-        logger.info("收到退出信号")
+
+    await shutdown_event.wait()
+    logger.info("收到 Ctrl+C，正在平仓...")
+
     task.cancel()
     try:
         await task
     except asyncio.CancelledError:
         pass
-    # 平仓并断开
     ok = await executor.close_all_positions()
     await telegram.send_message(f"🛑 停止 | 平仓{'成功' if ok else '失败'}")
     await feed.disconnect()
     await executor.disconnect()
     await redis_bus.close()
     await telegram.close()
+    logger.info("已退出")
 
 
 if __name__ == "__main__":
