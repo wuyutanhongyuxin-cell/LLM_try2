@@ -184,7 +184,7 @@ personality-trading-agents/
 │   ├── integration/             # 外部集成：Redis 消息总线 + Telegram（信号+漂移+成本告警）
 │   ├── utils/                   # 工具：配置 + 日志 + 匿名化 + 全链路日志 + TF-IDF + 知识图谱
 │   └── main.py                  # 主入口
-├── tests/                       # 223 个测试，覆盖全部模块
+├── tests/                       # 253 个测试，覆盖全部模块
 ├── scripts/
 │   ├── dashboard.py             # Rich 终端实时仪表盘
 │   ├── backtest.py              # 规则回测
@@ -399,6 +399,34 @@ enable_costs: true
 python scripts/llm_backtest.py --market cme --assets ES CL GC ZB --runs 2 --anonymize --max-steps 50
 ```
 输出：每个品种每个 Agent 的 PnL/Sharpe/交易数 + 跨品种对比表。
+
+---
+
+## P7：32-Agent 回测深度优化
+
+从 7 个扩展到 **32 个人格原型**（2^5 二元 SLOAN 全覆盖），并解决 32-Agent × 4 品种回测中发现的关键问题：
+
+| 修复项 | 根因 | 严重程度 | 解决方案 |
+|--------|------|---------|---------|
+| **confidence=0.0 兜底** | DeepSeek 对非主流品种输出 `confidence: 0.0`（BUY/SELL 却 conf=0 的矛盾组合） | 致命 | 代码级兜底：BUY/SELL + conf=0.0 时自动提升到 0.3（低置信度但可交易） |
+| **Prompt JSON 示例** | DeepSeek 需要具体的 JSON 示例才能正确输出格式 | 致命 | System Prompt 中增加完整 JSON 响应示例 |
+| **Confidence 校准规则** | LLM 不知道 conf=0 + BUY 是矛盾的 | 致命 | 增加规则：「BUY/SELL 的 confidence 必须 > 0」 |
+| **max_concurrent_positions 强制执行** | 字段存在但回测中从未检查 | 高 | `validate_signal()` 在 BUY 前检查 `current_positions >= max_concurrent` |
+| **SELL 持仓检查** | SELL 信号通过校验后在执行时才报错 | 中 | `validate_signal()` 在无持仓时拒绝 SELL |
+| **止损/止盈执行** | 持仓从未检查是否触发止损/止盈价格 | 高 | 每步决策前调用 `check_stop_loss_take_profit()` |
+| **品种描述注入** | DeepSeek 不熟悉 CL/GC/ZB → 输出 conf=0 | 中 | `ASSET_DESCRIPTIONS` 字典注入 Decision Prompt |
+| **持仓占比信息** | LLM 不知道可用余额百分比和已用仓位数 | 低 | 增加 `Available Balance: $X (Y%)` 和 `Positions Used: N/M` |
+| **CME 主流资产扩展** | 低 O 的 Agent（16/32）被阻止交易 CL/GC/ZB | 高 | 将 `major_assets` 扩展为包含全部 5 个 CME 合约 |
+
+**confidence=0.0 兜底逻辑**（`_backtest_helpers.py`）：
+```python
+# DeepSeek 常输出 conf=0.0 + BUY/SELL 的矛盾组合
+# 代码级兜底：提升到 0.3（低置信度但可交易）
+if action_str in ("BUY", "SELL") and confidence == 0.0:
+    confidence = 0.3
+```
+
+确保全部 32 个 Agent 都能在 4 个 CME 品种（ES/CL/GC/ZB）上交易，而非之前只有 3 个高 O Agent 能交易。
 
 ---
 
@@ -1007,7 +1035,7 @@ agents:
     initial_capital: 10000
 ```
 
-**可用预定义原型**：`冷静创新型`、`保守焦虑型`、`激进冒险型`、`纪律动量型`、`逆向价值型`、`平衡中庸型`、`情绪追涨型`
+**可用预定义原型**：共 32 个，基于 2^5 二元 OCEAN 穷举。4 个经典原型：`冷静创新型`、`保守焦虑型`、`激进冒险型`、`情绪追涨型`；28 个扩展原型详见上方完整表格。
 
 ---
 
@@ -1037,7 +1065,7 @@ agents:
 | 日志 | loguru | 结构化彩色输出 |
 | 仪表盘 | rich | 终端实时 UI |
 | CME 数据 | `databento` | Databento API 获取 CME 期货 OHLCV |
-| 测试 | pytest + pytest-asyncio | 223 个测试，全模块覆盖 |
+| 测试 | pytest + pytest-asyncio | 253 个测试，全模块覆盖 |
 
 **刻意不用的依赖**：pandas、numpy、django、flask、sqlalchemy——保持轻量。
 
@@ -1170,6 +1198,29 @@ Action KL=0.312 > critical(0.2)
 - [x] 按模型自动估算 LLM 成本（DeepSeek $0.001 / Claude $0.0135 / GPT-4o-mini $0.0006）
 - [x] `--assets ES CL GC ZB` 多品种对比模式 + 跨品种对比表
 - [x] `databento_feed.py` ImportError 安全降级
+
+### P6（完成）：LLM 回测优化
+- [x] 可配置置信度缩放（`backtest_confidence_scale: 0.6`）— 修复零交易 Agent
+- [x] 诊断日志：`REJECTED` vs `HOLD` 区分 + 每个拒绝路径的 debug 日志
+- [x] 空 LLM 响应自动重试（最多 3 次）
+- [x] 单次运行一致性计算（`--runs 1` 不再跳过）
+- [x] 未平仓头寸显示（`"0+1open"` 格式）+ Actions 统计列
+- [x] 初始资金提升到 $5M（CME 期货合理规模）
+- [x] Logger import 修复 — `LOG_LEVEL=DEBUG` 对回测脚本生效
+- [x] System Prompt 主动交易指导 + confidence 校准
+- [x] Decision Prompt 技术指标注入 — RSI(14)、SMA(20)、MACD
+- [x] `prompt_constants.py` 从 `prompt_generator.py` 拆分（文件行数合规）
+
+### P7（完成）：32-Agent 回测深度优化
+- [x] 7→32 人格原型（2^5 二元 SLOAN 全覆盖）
+- [x] confidence=0.0 代码级兜底（DeepSeek BUY/SELL + conf=0 → 自动提升到 0.3）
+- [x] Prompt JSON 示例 + confidence 校准规则
+- [x] `max_concurrent_positions` 在 `validate_signal()` 中强制执行
+- [x] SELL 持仓检查（无持仓时拒绝 SELL）
+- [x] 止损/止盈在回测循环中执行
+- [x] 品种描述注入（`ASSET_DESCRIPTIONS` 注入 Decision Prompt）
+- [x] 持仓占比信息增强（余额百分比、已用仓位数）
+- [x] CME `major_assets` 扩展为 5 个合约（全部 Agent 可交易全部品种）
 
 ### Phase 2（未来）：实盘交易
 - [ ] 接入真实 DEX（GRVT/Paradex）

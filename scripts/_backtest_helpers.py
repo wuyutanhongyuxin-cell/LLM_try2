@@ -77,6 +77,11 @@ def validate_signal(
         return None
     size_pct = _clip(float(data.get("size_pct", 0)), 0, constraints.max_position_pct)
     confidence = _clip(float(data.get("confidence", 0)), 0, 1.0)
+    # 代码级兜底：DeepSeek 对非主流品种常输出 conf=0.0 + BUY/SELL 的矛盾组合
+    # 此时将 confidence 提升到 0.3（低置信度但可交易），避免全部被拦截
+    if action_str in ("BUY", "SELL") and confidence == 0.0:
+        confidence = 0.3
+        logger.debug(f"[{agent_id}] conf=0.0 兜底 → 0.3 (action={action_str})")
     effective_threshold = constraints.min_confidence_threshold * confidence_scale
     if confidence < effective_threshold:
         logger.debug(

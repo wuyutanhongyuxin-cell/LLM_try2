@@ -173,7 +173,7 @@ personality-trading-agents/
 │   ├── integration/             # Redis pub/sub, Telegram (signals + drift alerts + cost reports)
 │   ├── utils/                   # Config loader, logger, asset anonymizer, trade logger, TF-IDF, knowledge graph
 │   └── main.py                  # System entry point
-├── tests/                       # 223 tests covering all modules
+├── tests/                       # 253 tests covering all modules
 ├── scripts/
 │   ├── dashboard.py             # Rich terminal real-time dashboard
 │   ├── backtest.py              # Rule-based historical backtesting
@@ -416,6 +416,34 @@ Three fixes applied:
 | **Decision Prompt: Technical Indicators** | Only price/change/volume — insufficient data for directional conviction | Inject RSI(14) with OVERSOLD/OVERBOUGHT labels, SMA(20) with price relation, MACD histogram with bullish/bearish signal |
 
 Prompt constants extracted to `prompt_constants.py` to keep `prompt_generator.py` under 200 lines.
+
+---
+
+## P7: 32-Agent Deep Backtest Optimization
+
+Expanded from 7 to **32 personality archetypes** (2^5 binary SLOAN coverage) and resolved critical issues discovered during 32-agent × 4-asset backtesting:
+
+| Fix | Root Cause | Severity | Solution |
+|-----|-----------|----------|----------|
+| **Confidence=0.0 Fallback** | DeepSeek outputs `confidence: 0.0` for BUY/SELL on non-mainstream assets despite prompt rules | Critical | Code-level fallback: if action is BUY/SELL and confidence=0.0, auto-raise to 0.3 (low but tradeable) |
+| **JSON Example in Prompt** | DeepSeek needs concrete JSON examples to output correct format | Critical | Added complete JSON response example in system prompt |
+| **Confidence Calibration Rules** | LLM not told that conf=0 + BUY is contradictory | Critical | Added rule: "BUY/SELL confidence MUST be > 0" |
+| **max_concurrent_positions** | Field existed but never enforced in backtest | High | `validate_signal()` checks `current_positions >= max_concurrent` before BUY |
+| **SELL Position Check** | SELL signals passed validation then failed at execution | Medium | `validate_signal()` rejects SELL when no position held |
+| **Stop-Loss/Take-Profit** | Positions never checked against SL/TP prices | High | Added `check_stop_loss_take_profit()` call before each agent decision step |
+| **Asset Descriptions** | DeepSeek unfamiliar with CL/GC/ZB → outputs conf=0 | Medium | `ASSET_DESCRIPTIONS` dict injected into decision prompt |
+| **Portfolio Context** | LLM didn't know available balance % or positions used | Low | Added `Available Balance: $X (Y%)` and `Positions Used: N/M` |
+| **CME Major Assets** | Low-O agents (16/32) blocked from CL/GC/ZB | High | Expanded `major_assets` to include all 5 CME contracts |
+
+**Confidence=0.0 Fallback Logic** (`_backtest_helpers.py`):
+```python
+# DeepSeek often outputs conf=0.0 + BUY/SELL — contradictory combination
+# Code-level fallback raises to 0.3 (low conviction but tradeable)
+if action_str in ("BUY", "SELL") and confidence == 0.0:
+    confidence = 0.3
+```
+
+This ensures all 32 agents can trade across all 4 CME assets (ES/CL/GC/ZB), not just the 3 high-O agents that worked before.
 
 ---
 
@@ -900,6 +928,17 @@ Example signal notification:
 - [x] System Prompt Decision Guidelines — active trading directives + confidence calibration
 - [x] Decision Prompt technical indicators — RSI(14), SMA(20), MACD injected from `indicators.py`
 - [x] `prompt_constants.py` extracted from `prompt_generator.py` (file size compliance)
+
+### P7 (Complete): 32-Agent Deep Backtest Optimization
+- [x] 7→32 personality archetypes (2^5 binary SLOAN full coverage)
+- [x] Confidence=0.0 code-level fallback (DeepSeek BUY/SELL + conf=0 → auto-raise to 0.3)
+- [x] Prompt JSON example + confidence calibration rules
+- [x] `max_concurrent_positions` enforcement in `validate_signal()`
+- [x] SELL position check (reject SELL when no position held)
+- [x] Stop-loss/take-profit execution in backtest loop
+- [x] Asset descriptions injection (`ASSET_DESCRIPTIONS` in decision prompt)
+- [x] Portfolio context enhancement (balance %, positions used)
+- [x] CME `major_assets` expanded to 5 contracts (all agents can trade all assets)
 
 ### Phase 2 (Future): Live Trading
 - [ ] Connect to real DEX (GRVT/Paradex)
