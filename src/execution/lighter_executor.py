@@ -10,12 +10,11 @@ from lighter import ApiClient, Configuration, SignerClient
 from loguru import logger
 
 from src.execution.lighter_helpers import (
-    fetch_last_price, place_ioc_order, query_balance, query_position, wait_for_fill,
+    fetch_last_price, place_ioc_order, query_balance, query_position,
 )
 from src.execution.signal import Action, TradeSignal
 
 BASE_URL = "https://mainnet.zklighter.elliot.ai"
-SEND_ERROR_GRACE_TIMEOUT = 1.5
 
 
 class LighterExecutor:
@@ -36,8 +35,6 @@ class LighterExecutor:
         self._market_index: int | None = None
         self._base_mult = self._price_mult = 1
         self._ticker, self._last_price = "", Decimal("0")
-        self._pending_fills: dict[int, asyncio.Event] = {}
-        self._fill_results: dict[int, dict] = {}
         self._local_position = self._realized_pnl = Decimal("0")
         self._trade_count = self._consecutive_losses = 0
 
@@ -114,46 +111,30 @@ class LighterExecutor:
             return True
         if not self._signer or self._market_index is None:
             return False
+        pos_before = await self.get_position()
         idx = int(time.time() * 1_000_000) % 1_000_000_000
-        event = asyncio.Event()
-        self._pending_fills[idx] = event
         try:
             await place_ioc_order(
                 self._signer, self._market_index,
                 idx, side, size, self._base_mult,
                 self._price_mult, price,
             )
-            fill = await wait_for_fill(
-                event, self._fill_results, idx, self._fill_timeout,
-            )
-            if fill:
-                self._update_position(side, fill)
-                self._trade_count += 1
-                return True
-            return False
         except Exception as e:
             logger.error(f"Lighter 下单异常: {e}")
-            # 等待延迟确认
-            try:
-                await asyncio.wait_for(event.wait(), SEND_ERROR_GRACE_TIMEOUT)
-                if idx in self._fill_results:
-                    self._update_position(side, self._fill_results.pop(idx))
-                    self._trade_count += 1
-                    return True
-            except asyncio.TimeoutError:
-                pass
-            return False
-        finally:
-            self._pending_fills.pop(idx, None)
-            self._fill_results.pop(idx, None)
-
-    def _update_position(self, side: str, fill: dict) -> None:
-        filled = fill.get("filled_size", Decimal("0"))
-        if side == "buy":
-            self._local_position += filled
-        else:
-            self._local_position = max(self._local_position - filled, Decimal("0"))
-        logger.info(f"仓位更新: {side} {filled} → {self._local_position}")
+        # 等待 Lighter 处理，然后用 REST 查询仓位确认成交
+        await asyncio.sleep(1.5)
+        pos_after = await self.get_position()
+        filled = abs(pos_after - pos_before)
+        if filled > Decimal("0.000001"):
+            self._local_position = pos_after
+            self._trade_count += 1
+            logger.info(
+                f"REST 确认成交: {side} {filled} {self._ticker} "
+                f"仓位 {pos_before}→{pos_after}"
+            )
+            return True
+        logger.warning(f"REST 确认未成交: 仓位未变 {pos_before}")
+        return False
 
     async def get_position(self) -> Decimal:
         return await query_position(
@@ -171,28 +152,22 @@ class LighterExecutor:
         if self._dry_run:
             logger.info(f"[DRY-RUN] 平仓: {pos}")
             return True
-        side, idx = "sell" if pos > 0 else "buy", int(time.time() * 1_000_000) % 1_000_000_000
-        event = asyncio.Event()
-        self._pending_fills[idx] = event
+        side = "sell" if pos > 0 else "buy"
+        idx = int(time.time() * 1_000_000) % 1_000_000_000
         try:
-            # 平仓用最近价格；如果没有则查 REST
             close_price = self._last_price if self._last_price > 0 else await fetch_last_price(self._api_client, self._market_index)
             await place_ioc_order(self._signer, self._market_index, idx, side, abs(pos), self._base_mult, self._price_mult, close_price, reduce_only=True)
-            try:
-                await asyncio.wait_for(event.wait(), timeout=3.0)
-            except asyncio.TimeoutError:
-                pass
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(1.5)
             remaining = await self.get_position()
+            self._local_position = remaining
             if abs(remaining) < abs(pos) * Decimal("0.5"):
-                self._local_position = Decimal("0")
+                logger.info(f"平仓成功: {pos}→{remaining}")
                 return True
+            logger.warning(f"平仓部分成交: {pos}→{remaining}")
             return False
         except Exception as e:
             logger.error(f"平仓异常: {e}")
             return False
-        finally:
-            self._pending_fills.pop(idx, None)
 
     def get_agent_stats(self, agent_id: str) -> dict:
         return {"agent_id": agent_id, "local_position": float(self._local_position),

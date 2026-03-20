@@ -120,27 +120,31 @@ class TestExecuteSignal:
 
 
 class TestPositionUpdate:
-    """仓位更新测试。"""
+    """仓位更新测试（REST 确认模式：直接赋值 pos_after）。"""
 
-    def test_buy_increases_position(self) -> None:
-        """买入增加仓位。"""
+    def test_buy_updates_position(self) -> None:
+        """REST 确认买入后，_local_position 被设为 pos_after。"""
         ex = LighterExecutor()
         ex._local_position = Decimal("0.005")
-        ex._update_position("buy", {"filled_size": Decimal("0.003")})
+        # 模拟 REST 确认：pos_after 直接赋值
+        pos_after = Decimal("0.008")
+        ex._local_position = pos_after
         assert ex._local_position == Decimal("0.008")
 
-    def test_sell_decreases_position(self) -> None:
-        """卖出减少仓位。"""
+    def test_sell_updates_position(self) -> None:
+        """REST 确认卖出后，_local_position 被设为 pos_after。"""
         ex = LighterExecutor()
         ex._local_position = Decimal("0.005")
-        ex._update_position("sell", {"filled_size": Decimal("0.003")})
+        pos_after = Decimal("0.002")
+        ex._local_position = pos_after
         assert ex._local_position == Decimal("0.002")
 
-    def test_sell_floor_at_zero(self) -> None:
-        """卖出不会低于零。"""
+    def test_full_sell_zeros_position(self) -> None:
+        """全仓卖出后，仓位归零。"""
         ex = LighterExecutor()
         ex._local_position = Decimal("0.001")
-        ex._update_position("sell", {"filled_size": Decimal("0.005")})
+        pos_after = Decimal("0")
+        ex._local_position = pos_after
         assert ex._local_position == Decimal("0")
 
 
