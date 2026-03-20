@@ -56,7 +56,7 @@ class TradingAgent(BaseAgent):
         self._market_type: str = market_type
         self._memory: AgentMemory = AgentMemory(agent_id, redis_bus)
         self._system_prompt: str = generate_system_prompt(
-            profile, constraints, market_type, leverage=leverage,
+            profile, constraints, market_type, leverage=leverage, mmr=mmr,
         )
         self._prompt_hash: str = get_prompt_hash(self._system_prompt)
         self._positions: list[dict] = []

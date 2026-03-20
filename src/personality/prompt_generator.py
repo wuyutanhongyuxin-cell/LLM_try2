@@ -37,7 +37,7 @@ def generate_system_prompt(
     profile: OceanProfile,
     constraints: TradingConstraints,
     market_type: str = "crypto",
-    leverage: int = 1,
+    leverage: int = 1, mmr: float = 0.012,
 ) -> str:
     """生成 System Prompt（英文），Agent 初始化时调用一次。"""
     role_tmpl = ROLE_TEMPLATES.get(market_type, ROLE_TEMPLATES["crypto"])
@@ -90,16 +90,15 @@ def generate_system_prompt(
     # 杠杆风险提示（实盘使用高杠杆时注入）
     leverage_sec = ""
     if leverage > 1:
-        liq_dist = (1.0 / leverage - 0.004) * 100
+        liq_dist = (1.0 / leverage - mmr) * 100
         max_sl = liq_dist * 0.6
         leverage_sec = (
             f"## LEVERAGE WARNING (CRITICAL)\n"
-            f"- Trading with {leverage}x leverage.\n"
-            f"- Liquidation distance: ~{liq_dist:.1f}% from entry.\n"
-            f"- Your stop_loss MUST be within {max_sl:.1f}% of entry price. "
-            f"A 12% stop-loss at {leverage}x means {12*leverage}% margin loss = instant liquidation.\n"
-            f"- Recommended SL: 0.3%-0.8% | TP: 0.5%-1.5% (R:R 1:1.5 to 1:2).\n"
-            f"- Set TIGHT stops. Your personality affects sizing and confidence, NOT stop distance."
+            f"- Trading with {leverage}x leverage. Liquidation at ~{liq_dist:.1f}% from entry.\n"
+            f"- stop_loss MUST be within {max_sl:.2f}% of entry. "
+            f"Example: entry=$70000 → max SL distance=${70000*max_sl/100:.0f}.\n"
+            f"- Recommended SL: 0.2%-{max_sl:.1f}% | TP: R:R 1:2 to 1:3.\n"
+            f"- Personality affects sizing/confidence, NOT stop distance."
         )
     parts = [role, personality, hard, output_fmt, action_guide]
     if leverage_sec:

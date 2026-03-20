@@ -8,7 +8,7 @@ lighter:
   fill_timeout_seconds: 3          # 填单确认超时
   min_balance_usd: 10              # 最低余额警戒
   max_consecutive_losses: 5        # 连续亏损暂停阈值
-  maintenance_margin_rate: 0.004   # 维持保证金率（0.4%）
+  maintenance_margin_rate: 0.012   # Lighter BTC MMR=1.2%（Binance 0.4% 不适用）
   costs:
     taker_fee_rate: 0              # Lighter 0% taker fee
     slippage_bps: 2                # 预估滑点（基点）
