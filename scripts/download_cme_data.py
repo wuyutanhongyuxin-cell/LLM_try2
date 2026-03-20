@@ -143,7 +143,7 @@ def main() -> None:
     for symbol_key, continuous_sym in _SYMBOLS.items():
         rows = _download_symbol(client, symbol_key, continuous_sym)
         if rows:
-            out_path = str(data_dir / f"{symbol_key.lower()}_1h_real.csv")
+            out_path = str(data_dir / "cme" / "market" / f"{symbol_key.lower()}_1h_real.csv")
             _write_csv(rows, out_path)
             success += 1
 
@@ -156,7 +156,7 @@ def main() -> None:
     print("接下来运行回测:")
     for sym in _SYMBOLS:
         csv_name = f"{sym.lower()}_1h_real.csv"
-        print(f"  python scripts/backtest.py --market cme --asset {sym} --csv data/{csv_name}")
+        print(f"  python scripts/backtest.py --market cme --asset {sym} --csv data/cme/market/{csv_name}")
 
 
 if __name__ == "__main__":

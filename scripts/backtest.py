@@ -3,8 +3,8 @@ from __future__ import annotations
 """历史回测脚本：使用 MockDataFeed + 规则决策（不调LLM）生成 PnL 对比。
 
 支持两种市场:
-  加密货币: python scripts/backtest.py --market crypto --csv data/btc_1h_2024.csv
-  CME期货:  python scripts/backtest.py --market cme --asset ES --csv data/es_1h_2024.csv
+  加密货币: python scripts/backtest.py --market crypto --csv data/crypto/market/btc_1h_2024.csv
+  CME期货:  python scripts/backtest.py --market cme --asset ES --csv data/cme/market/es_1h_2024.csv
 """
 
 import argparse
@@ -41,8 +41,8 @@ _MARKET_CONFIGS: dict[str, dict[str, list[str]]] = {
 
 # 默认 CSV 路径
 _DEFAULT_CSV: dict[str, str] = {
-    "crypto": "data/btc_1h_2024.csv",
-    "cme": "data/es_1h_2024.csv",
+    "crypto": "data/crypto/market/btc_1h_2024.csv",
+    "cme": "data/cme/market/es_1h_2024.csv",
 }
 
 # 默认资产

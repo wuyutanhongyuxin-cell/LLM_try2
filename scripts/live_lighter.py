@@ -18,6 +18,7 @@ from src.market.lighter_feed import LighterLiveDataFeed
 from src.personality.ocean_model import get_profile
 from src.personality.trait_to_constraint import ocean_to_constraints
 from src.utils.config_loader import load_llm_config, load_trading_config, load_yaml
+from src.utils.persistent_trade_logger import PersistentTradeLogger
 
 
 def parse_args() -> argparse.Namespace:
@@ -57,6 +58,7 @@ async def decision_loop(
     llm_config: dict, profile_name: str, interval: int,
     capital: float, asset_config: dict,
     leverage: int = 1, mmr: float = 0.012,
+    trade_logger: PersistentTradeLogger | None = None,
 ) -> None:
     from src.agent.trading_agent import TradingAgent, _snapshot_to_dict
     from src.personality.prompt_generator import generate_decision_prompt
@@ -114,6 +116,16 @@ async def decision_loop(
                 await telegram.notify_signal(sig)
                 agent._memory.add_trade_result(sig.model_dump())
                 await agent._memory.save_trade_to_l2(sig.model_dump())
+                # 磁盘持久化交易记录
+                if trade_logger:
+                    bal = await executor.get_balance()
+                    rec = PersistentTradeLogger.from_signal(
+                        sig.model_dump(), agent_id=f"live_{profile_name}",
+                        agent_name=profile_name, market_type="lighter",
+                        executed=True, position_after=float(executor._local_position),
+                        balance_after=float(bal), leverage=leverage,
+                    )
+                    trade_logger.log_trade(rec)
                 agent._trade_count += 1
                 # 每 10 笔触发 L3 反思（自动归档到 L4）
                 if agent._trade_count % 10 == 0:
@@ -172,6 +184,7 @@ async def main() -> None:
         leverage = executor._detected_leverage
     logger.info(f"杠杆: {leverage}x {'(链上)' if executor._detected_leverage > 0 else '(配置)'}")
 
+    trade_logger = PersistentTradeLogger(market_type="lighter")
     mode = "DRY-RUN" if args.dry_run else "LIVE"
     o, c, e, a, n = profile.openness, profile.conscientiousness, profile.extraversion, profile.agreeableness, profile.neuroticism
     msg = f"🚀 Lighter [{mode}] {leverage}x | {args.agent} (O{o}/C{c}/E{e}/A{a}/N{n}) | {ticker} {interval}s"
@@ -185,7 +198,7 @@ async def main() -> None:
     task = asyncio.create_task(decision_loop(
         feed, executor, redis_bus, telegram,
         llm_cfg, args.agent, interval, args.capital, asset_config,
-        leverage=leverage, mmr=mmr,
+        leverage=leverage, mmr=mmr, trade_logger=trade_logger,
     ))
 
     await shutdown_event.wait()

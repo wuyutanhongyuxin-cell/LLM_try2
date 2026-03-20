@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """真实 LLM 回测：调用 LLM 决策循环，支持多次运行收集一致性数据。
 
-用法: python scripts/llm_backtest.py --csv data/btc_1h_2024.csv --runs 3 --agents 32
+用法: python scripts/llm_backtest.py --csv data/crypto/market/btc_1h_2024.csv --runs 3 --agents 32
 特性: 真实 LLM 调用 | --runs N 一致性 | --anonymize 防 bias | 限流控制
 """
 
@@ -70,8 +70,8 @@ def _parse_args() -> argparse.Namespace:
                    help="启用多市况回测（需要 data/ 下有对应的 bear/sideways/bull CSV）")
     p.add_argument("--assets", nargs="+", default=None,
                    help="多品种对比模式，如: --assets ES CL GC ZB")
-    p.add_argument("--csv-dir", default="data",
-                   help="多品种模式的 CSV 目录（默认 data/，文件名: {asset}_1h_real.csv）")
+    p.add_argument("--csv-dir", default="data/cme/market",
+                   help="多品种模式的 CSV 目录（默认 data/cme/market/，文件名: {asset}_1h_real.csv）")
     return p.parse_args()
 
 
@@ -320,9 +320,9 @@ async def _run_multi_market(
     """多市况模式：对 bear/sideways/bull 三种市况分别回测并输出跨市况对比。"""
     from _backtest_helpers import print_cross_market_results
     market_files = {
-        "bear": "data/btc_bear.csv",
-        "sideways": "data/btc_sideways.csv",
-        "bull": "data/btc_bull.csv",
+        "bear": "data/crypto/market/btc_bear.csv",
+        "sideways": "data/crypto/market/btc_sideways.csv",
+        "bull": "data/crypto/market/btc_bull.csv",
     }
     market_results: dict[str, dict[str, dict]] = {}
     for market_name, csv_path in market_files.items():

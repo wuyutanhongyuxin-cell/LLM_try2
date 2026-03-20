@@ -1,11 +1,11 @@
 """从单个历史CSV生成多市况合成数据。
 
-用法: python scripts/generate_synthetic_data.py --csv data/btc_1h_2024.csv --output data/
+用法: python scripts/generate_synthetic_data.py --csv data/crypto/market/btc_1h_2024.csv
 
 输出:
-  data/btc_bear.csv    — 模拟熊市（价格趋势性下跌30%）
-  data/btc_sideways.csv — 模拟横盘（价格围绕均值±5%震荡）
-  data/btc_bull.csv    — 原始数据（已是牛市）
+  data/crypto/market/btc_bear.csv    — 模拟熊市（价格趋势性下跌30%）
+  data/crypto/market/btc_sideways.csv — 模拟横盘（价格围绕均值±5%震荡）
+  data/crypto/market/btc_bull.csv    — 原始数据（已是牛市）
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ def _parse_args() -> argparse.Namespace:
     """解析命令行参数。"""
     p = argparse.ArgumentParser(description="多市况合成数据生成")
     p.add_argument("--csv", required=True, help="原始历史 CSV 路径")
-    p.add_argument("--output", default="data/", help="输出目录")
+    p.add_argument("--output", default="data/crypto/market/", help="输出目录")
     return p.parse_args()
 
 

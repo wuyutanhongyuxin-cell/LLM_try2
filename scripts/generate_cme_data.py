@@ -1,7 +1,7 @@
 """生成 CME 期货合成历史数据 CSV。
 
 用法: python scripts/generate_cme_data.py
-输出: data/es_1h_2024.csv, data/nq_1h_2024.csv, data/cl_1h_2024.csv 等
+输出: data/cme/market/es_1h_2024.csv, data/cme/market/cl_1h_2024.csv 等
 
 基于真实的价格区间和波动率特征生成逼真的模拟 OHLCV 数据。
 """
@@ -97,7 +97,8 @@ def _write_csv(rows: list[dict[str, str]], path: str) -> None:
 
 def main() -> None:
     """为每个 CME 合约生成合成数据。"""
-    data_dir = Path(__file__).resolve().parent.parent / "data"
+    data_dir = Path(__file__).resolve().parent.parent / "data" / "cme" / "market"
+    data_dir.mkdir(parents=True, exist_ok=True)
     print("生成 CME 合成数据...")
     for symbol, (start_price, vol, avg_vol) in _CONTRACTS.items():
         rows = _generate_ohlcv(symbol, start_price, vol, avg_vol, _BARS, seed=hash(symbol) % 10000)
