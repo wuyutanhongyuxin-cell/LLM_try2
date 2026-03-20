@@ -1,8 +1,9 @@
-"""三层记忆系统（模仿 FinMem）。
+"""四层记忆系统（基于 FinMem 扩展）。
 
 L1 Working — tick + 交易结果，内存，同步 | L2 Episodic — 交易记录，Redis，50 笔
-L3 Semantic — 反思总结，Redis，20 条
+L3 Semantic — 反思总结，Redis，20 条 | L4 Wisdom — 永久交易智慧，本地文件
 Redis key: agent:{id}:trades / agent:{id}:reflections
+L4 file: data/memory/{id}/archive.jsonl + wisdom.md
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from src.agent.long_term_memory import LongTermMemory
 from src.utils.tfidf import rank_by_similarity
 
 if TYPE_CHECKING:
@@ -31,6 +33,7 @@ class AgentMemory:
         self._redis: RedisBus = redis_bus
         self._working_ticks: list[dict] = []   # L1: 最多 20 条 tick
         self._working_trades: list[dict] = []  # L1: 最多 5 条交易
+        self._long_term = LongTermMemory(agent_id)  # L4: 永久记忆
 
     # ── Redis key ─────────────────────────────────────
 
@@ -80,10 +83,11 @@ class AgentMemory:
     # ── L3 异步操作（Redis） ─────────────────────────
 
     async def add_reflection(self, summary: str) -> None:
-        """添加反思总结到 L3，超 20 条自动淘汰。"""
+        """添加反思总结到 L3（滚动20条）+ L4（永久归档）。"""
         await self._redis.lpush_json(self._l3_key, summary)
         await self._redis.ltrim(self._l3_key, 0, _L3_REFLECTION_LIMIT - 1)
-        logger.info("[{}] L3 新增反思总结", self._agent_id)
+        self._long_term.archive_reflection(summary)  # L4 永久保存
+        logger.info("[{}] L3+L4 新增反思总结", self._agent_id)
 
     async def _get_reflections(self, count: int = 5) -> list[str]:
         """获取最近 N 条反思（从 L3）。"""
@@ -177,9 +181,14 @@ class AgentMemory:
         if reflections:
             weighted = self._apply_decay(reflections, base_alpha=0.98)
             for ref, w in weighted:
-                # 低权重项只展示前 50 字符
                 display = ref if w >= 0.5 else (ref[:50] + "..." if len(ref) > 50 else ref)
                 parts.append(f"  - [{w:.2f}] {display}")
         else:
             parts.append("No reflections yet.")
+        # L4 永久交易智慧
+        wisdom = self._long_term.get_wisdom()
+        if wisdom:
+            parts.append("\n=== LONG-TERM WISDOM ===")
+            # 截取前 800 字符防止 prompt 过长
+            parts.append(wisdom[:800] if len(wisdom) > 800 else wisdom)
         return "\n".join(parts)

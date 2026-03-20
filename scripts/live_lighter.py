@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Lighter DEX 单 Agent 实盘入口。
-
-用法:
-    python scripts/live_lighter.py --agent "乐观冲浪型" --ticker BTC --dry-run
-    python scripts/live_lighter.py --agent "乐观冲浪型" --capital 50 --max-position 0.001
-"""
+"""Lighter DEX 单 Agent 实盘入口。"""
 from __future__ import annotations
 
 import argparse
@@ -118,9 +113,14 @@ async def decision_loop(
                 agent._memory.add_trade_result(sig.model_dump())
                 await agent._memory.save_trade_to_l2(sig.model_dump())
                 agent._trade_count += 1
-                # 每 10 笔交易触发 L3 反思（压缩历史经验供未来决策参考）
+                # 每 10 笔交易触发 L3 反思（自动归档到 L4 永久记忆）
                 if agent._trade_count % 10 == 0:
                     await agent._trigger_reflection()
+                # 每 50 笔交易压缩 L4 交易智慧摘要
+                if agent._trade_count % 50 == 0:
+                    await agent._memory._long_term.compress_wisdom(
+                        profile, llm_config,
+                    )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -162,12 +162,8 @@ async def main() -> None:
         return
 
     mode = "DRY-RUN" if args.dry_run else "LIVE"
-    msg = (
-        f"🚀 Lighter [{mode}] | {args.agent} "
-        f"(O{profile.openness}/C{profile.conscientiousness}"
-        f"/E{profile.extraversion}/A{profile.agreeableness}"
-        f"/N{profile.neuroticism}) | {ticker} {interval}s"
-    )
+    o, c, e, a, n = profile.openness, profile.conscientiousness, profile.extraversion, profile.agreeableness, profile.neuroticism
+    msg = f"🚀 Lighter [{mode}] | {args.agent} (O{o}/C{c}/E{e}/A{a}/N{n}) | {ticker} {interval}s"
     logger.info(msg)
     await telegram.send_message(msg)
 
