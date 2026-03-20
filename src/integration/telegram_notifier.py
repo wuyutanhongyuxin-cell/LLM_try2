@@ -44,17 +44,22 @@ class TelegramNotifier:
             logger.warning("Telegram 通知未启用（缺少 token/chat_id 或未安装 aiogram）")
 
     async def send_message(self, text: str) -> None:
-        """发送消息，失败只记日志。"""
+        """发送消息，Markdown 失败时自动降级为纯文本。"""
         if not self._enabled or self._bot is None:
             return
         try:
             await self._bot.send_message(
-                chat_id=self._chat_id,
-                text=text,
+                chat_id=self._chat_id, text=text,
                 parse_mode=ParseMode.MARKDOWN if ParseMode else "Markdown",
             )
-        except Exception as exc:
-            logger.error("Telegram 发送失败: {}", exc)
+        except Exception:
+            # Markdown 解析失败（LLM 文本含特殊字符），降级纯文本重发
+            try:
+                await self._bot.send_message(
+                    chat_id=self._chat_id, text=text,
+                )
+            except Exception as exc:
+                logger.error("Telegram 发送失败: {}", exc)
 
     async def notify_signal(self, signal: TradeSignal) -> None:
         """推送交易信号通知。"""
