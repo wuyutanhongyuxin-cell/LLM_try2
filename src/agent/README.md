@@ -7,7 +7,8 @@
 - `base_agent.py` — Agent 基类，asyncio 生命周期管理（~63行）
 - `trading_agent.py` — 核心交易 Agent，LLM 决策循环（~200行）
 - `memory.py` — 四层记忆系统：Working / Episodic / Semantic / Wisdom（~194行）
-- `long_term_memory.py` — L4 永久长期记忆：归档+LLM智慧压缩（~147行）
+- `long_term_memory.py` — L4 永久记忆：归档+投票淘汰+智慧压缩（~171行）
+- `memory_pruner.py` — 记忆投票淘汰：3轮LLM投票清理过时经验（~139行）
 - `reflection.py` — 交易反思模块，每 10 笔触发（~137行）
 
 ## 记忆架构

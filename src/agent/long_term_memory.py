@@ -1,11 +1,11 @@
-"""L4 永久长期记忆 — 类似 Claude Memory 的持久化交易智慧。
+"""L4 永久长期记忆 — 持久化交易智慧 + 投票淘汰过时经验。
 
 L3 反思最多 20 条会被淘汰，L4 将所有反思归档到本地文件，
-并定期用 LLM 压缩成「交易智慧」摘要，永久保留、越跑越聪明。
+定期用 LLM 压缩成「交易智慧」摘要，并通过多轮投票淘汰错误经验。
 
 文件结构：
   data/memory/{agent_id}/
-    archive.jsonl   — 全部反思原文（追加写入，永不删除）
+    archive.jsonl   — 归档反思（可被投票淘汰）
     wisdom.md       — LLM 压缩后的交易智慧摘要（定期更新）
 """
 
@@ -19,10 +19,12 @@ from pathlib import Path
 from loguru import logger
 from litellm import acompletion
 
+from src.agent.memory_pruner import apply_prune, vote_prune_entries
 from src.personality.ocean_model import OceanProfile
 
 _MEMORY_DIR = Path("data/memory")
 _MAX_RETRIES = 2
+_MIN_ENTRIES_FOR_PRUNE = 10  # 低于此数量不触发淘汰
 
 
 class LongTermMemory:
@@ -74,13 +76,30 @@ class LongTermMemory:
             return ""
         return self._wisdom_path.read_text(encoding="utf-8").strip()
 
-    async def compress_wisdom(
+    async def review_and_compress(
         self, profile: OceanProfile, llm_config: dict,
+        recent_trades: list[dict] | None = None,
     ) -> bool:
-        """用 LLM 将全部归档反思压缩成交易智慧摘要，覆写 wisdom.md。"""
+        """先投票淘汰过时经验，再压缩交易智慧。"""
         entries = self.get_all_archived()
         if not entries:
             return False
+        # 步骤1：投票淘汰（>= 10 条才触发）
+        if len(entries) >= _MIN_ENTRIES_FOR_PRUNE:
+            prune_ids = await vote_prune_entries(
+                entries, profile, llm_config, recent_trades,
+            )
+            if prune_ids:
+                entries = apply_prune(entries, prune_ids)
+                self._rewrite_archive(entries)
+        # 步骤2：压缩智慧
+        return await self._compress(profile, llm_config, entries)
+
+    async def _compress(
+        self, profile: OceanProfile, llm_config: dict,
+        entries: list[dict],
+    ) -> bool:
+        """用 LLM 将归档反思压缩成交易智慧摘要。"""
         current_wisdom = self.get_wisdom()
         prompt = _build_compress_prompt(profile, entries, current_wisdom)
         messages = [{"role": "user", "content": prompt}]
@@ -88,9 +107,7 @@ class LongTermMemory:
             try:
                 resp = await acompletion(
                     model=llm_config.get("model", "claude-sonnet-4-20250514"),
-                    messages=messages,
-                    temperature=0.2,
-                    max_tokens=2048,
+                    messages=messages, temperature=0.2, max_tokens=2048,
                 )
                 wisdom: str = resp.choices[0].message.content  # type: ignore
                 self._wisdom_path.write_text(wisdom.strip(), encoding="utf-8")
@@ -105,6 +122,13 @@ class LongTermMemory:
                     f"(第{attempt+1}次): {exc}"
                 )
         return False
+
+    def _rewrite_archive(self, entries: list[dict]) -> None:
+        """淘汰后重写归档文件。"""
+        with open(self._archive_path, "w", encoding="utf-8") as f:
+            for e in entries:
+                f.write(json.dumps(e, ensure_ascii=False) + "\n")
+        logger.info(f"[{self._agent_id}] 归档已重写 (剩余{len(entries)}条)")
 
 
 def _build_compress_prompt(
