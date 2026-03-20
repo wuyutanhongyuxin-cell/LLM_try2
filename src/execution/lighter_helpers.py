@@ -136,7 +136,7 @@ async def query_leverage(
         if data and data.accounts:
             for pos in data.accounts[0].positions:
                 if pos.market_id == market_index:
-                    imf = int(pos.initial_margin_fraction)
+                    imf = int(float(pos.initial_margin_fraction))
                     if imf > 0:
                         lev = 10000 // imf
                         logger.info(f"Lighter 杠杆读取: IMF={imf} → {lev}x")
