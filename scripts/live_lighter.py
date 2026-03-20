@@ -2,7 +2,7 @@
 """Lighter DEX 实盘入口（自动读取链上杠杆）。"""
 from __future__ import annotations
 
-import argparse, asyncio, os, signal, sys
+import argparse, asyncio, os, sys
 from contextlib import suppress
 from decimal import Decimal
 
@@ -207,27 +207,31 @@ async def main() -> None:
     logger.info(msg)
     await telegram.send_message(msg)
 
-    shutdown_event = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, shutdown_event.set)
     task = asyncio.create_task(decision_loop(
         feed, executor, redis_bus, telegram,
         llm_cfg, args.agent, interval, args.capital, asset_config,
         leverage=leverage, mmr=mmr, trade_logger=trade_logger,
     ))
 
-    await shutdown_event.wait()
-    logger.info("收到 Ctrl+C，正在平仓...")
-
-    task.cancel()
-    with suppress(asyncio.CancelledError):
+    # 用 try/finally 保证 Ctrl+C 时一定执行平仓（兼容所有 Python 版本）
+    try:
         await task
-    ok = await executor.close_all_positions()
-    await telegram.send_message(f"🛑 停止 | 平仓{'成功' if ok else '失败'}")
-    for coro in [feed.disconnect(), executor.disconnect(), redis_bus.close(), telegram.close()]:
-        await coro
-    logger.info("已退出")
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        pass
+    finally:
+        logger.info("收到退出信号，正在平仓...")
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+        try:
+            ok = await executor.close_all_positions()
+            await telegram.send_message(f"🛑 停止 | 平仓{'成功' if ok else '失败'}")
+        except Exception as e:
+            logger.error(f"平仓异常: {e}")
+        for coro in [feed.disconnect(), executor.disconnect(), redis_bus.close(), telegram.close()]:
+            with suppress(Exception):
+                await coro
+        logger.info("已退出")
 
 
 if __name__ == "__main__":
