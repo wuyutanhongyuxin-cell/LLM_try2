@@ -36,27 +36,19 @@ def parse_args() -> argparse.Namespace:
 
 def _build_asset_config(ticker: str) -> dict[str, list[str]]:
     """构建 ocean_to_constraints 所需的 global_config。"""
-    asset_perp = f"{ticker}-PERP"
+    ap = f"{ticker}-PERP"
     try:
-        trading_cfg = load_trading_config()
-        crypto = trading_cfg.get("trading", {}).get("crypto", {})
-        assets = crypto.get("assets", {})
-        return {
-            "major_assets": assets.get("major", [asset_perp]),
-            "all_assets": assets.get("all", [asset_perp]),
-        }
+        assets = load_trading_config().get("trading", {}).get("crypto", {}).get("assets", {})
+        return {"major_assets": assets.get("major", [ap]), "all_assets": assets.get("all", [ap])}
     except Exception:
-        return {"major_assets": [asset_perp], "all_assets": [asset_perp]}
+        return {"major_assets": [ap], "all_assets": [ap]}
 
 
 async def resolve_market_index(ticker: str) -> int:
     """通过 Lighter API 查询 ticker 对应的 market_index。"""
     import lighter as sdk
-    api = sdk.ApiClient(configuration=sdk.Configuration(
-        host="https://mainnet.zklighter.elliot.ai",
-    ))
-    order_api = sdk.OrderApi(api)
-    obs = await order_api.order_books()
+    api = sdk.ApiClient(configuration=sdk.Configuration(host="https://mainnet.zklighter.elliot.ai"))
+    obs = await sdk.OrderApi(api).order_books()
     await api.close()
     for m in obs.order_books:
         if m.symbol == ticker:
@@ -90,6 +82,18 @@ async def decision_loop(
             if snapshot is None:
                 await asyncio.sleep(interval)
                 continue
+            # 同步真实仓位，让 LLM 看到实际持仓
+            real_pos = executor._local_position
+            if real_pos > 0:
+                agent._positions = [{
+                    "asset": asset, "size": float(real_pos),
+                    "entry_price": float(executor._last_price or snapshot.price),
+                    "unrealized_pnl": 0.0,
+                }]
+            else:
+                agent._positions = []
+            bal = await executor.get_balance()
+            agent._portfolio_value = bal + real_pos * Decimal(str(snapshot.price))
             ctx = await agent._memory.get_context_for_decision(asset, "")
             prompt = generate_decision_prompt(
                 _snapshot_to_dict(snapshot), agent._positions,
@@ -145,10 +149,8 @@ async def main() -> None:
     executor = LighterExecutor(
         account_index=int(os.environ.get("LIGHTER_ACCOUNT_INDEX", "0")),
         api_key_index=int(os.environ.get("LIGHTER_API_KEY_INDEX", "0")),
-        max_position=max_pos,
-        fill_timeout=lighter_cfg.get("fill_timeout_seconds", 3.0),
-        min_balance=Decimal(str(lighter_cfg.get("min_balance_usd", 10))),
-        dry_run=args.dry_run,
+        max_position=max_pos, fill_timeout=lighter_cfg.get("fill_timeout_seconds", 3.0),
+        min_balance=Decimal(str(lighter_cfg.get("min_balance_usd", 10))), dry_run=args.dry_run,
     )
     redis_bus = RedisBus(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
     telegram = TelegramNotifier()
@@ -168,12 +170,10 @@ async def main() -> None:
     logger.info(msg)
     await telegram.send_message(msg)
 
-    # Ctrl+C 优雅退出：设置 shutdown_event
     shutdown_event = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, shutdown_event.set)
-
     task = asyncio.create_task(decision_loop(
         feed, executor, redis_bus, telegram,
         llm_cfg, args.agent, interval, args.capital, asset_config,

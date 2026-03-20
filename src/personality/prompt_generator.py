@@ -1,11 +1,6 @@
 from __future__ import annotations
 
-"""Prompt 生成器：将 OCEAN 人格参数和交易约束转化为 LLM Prompt。
-
-支持多市场类型：crypto（加密货币永续合约）和 cme（CME 期货）。
-Prompt 全部用英文（LLM 英文推理更准），日志和通知用中文。
-末尾附带 SHA256 前 12 位 hash 用于版本追溯。
-"""
+"""Prompt 生成器：OCEAN 人格 → LLM Prompt。支持 crypto/cme 市场。"""
 
 import hashlib
 
@@ -84,15 +79,18 @@ def generate_system_prompt(
         "## Decision Guidelines\n"
         "- You are an ACTIVE trader, not a passive observer. "
         "Analyze the data and take positions when you see opportunity.\n"
+        "- BUY = bullish signal, open or add to long position.\n"
+        "- SELL = bearish signal, close existing position or express a short view. "
+        "You SHOULD use SELL when you believe the price will drop, "
+        "regardless of whether you currently hold a position.\n"
         "- HOLD should ONLY be used when the data is genuinely ambiguous "
         "or contradicts your trading style. Do NOT default to HOLD out of caution.\n"
         "- If technical indicators show a clear trend (RSI oversold/overbought, "
         "MACD crossover, price above/below SMA), you SHOULD act on it.\n"
         "- Your personality defines HOW you trade (aggressive vs conservative sizing, "
         "tight vs loose stops), not WHETHER you trade.\n"
-        "- Confidence calibration: 0.3-0.5 = moderate conviction (acceptable for trading), "
-        "0.5-0.7 = strong conviction, 0.7+ = very high conviction. "
-        "A confidence of 0.4 is sufficient to act."
+        "- Confidence: 0.3 = low but tradeable, 0.5 = moderate, 0.7+ = high. "
+        "0.4 is sufficient to act. confidence=0.0 is ONLY for HOLD."
     )
     rules = (
         "## Rules\n"
@@ -100,11 +98,6 @@ def generate_system_prompt(
         "- Do NOT exceed any hard constraint listed above.\n"
         "- Do NOT output anything other than the JSON object.\n"
         "- Do NOT wrap the JSON in markdown code fences.\n"
-        "- If your action is BUY or SELL, confidence MUST be greater than 0. "
-        "confidence=0.0 means absolute certainty the trade will fail — "
-        "use it ONLY with HOLD.\n"
-        "- Confidence calibration: 0.3 = low conviction but tradeable, "
-        "0.5 = moderate, 0.7 = high, 0.9 = extremely high.\n"
         "You MUST respond with ONLY a valid JSON object."
     )
     prompt = "\n\n".join([role, personality, hard, output_fmt, action_guide, rules])
