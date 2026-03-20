@@ -37,14 +37,9 @@ def generate_system_prompt(
     profile: OceanProfile,
     constraints: TradingConstraints,
     market_type: str = "crypto",
+    leverage: int = 1,
 ) -> str:
-    """生成 System Prompt（英文），Agent 初始化时调用一次。
-
-    Args:
-        profile: OCEAN 人格配置
-        constraints: 交易硬约束
-        market_type: 市场类型 "crypto" 或 "cme"
-    """
+    """生成 System Prompt（英文），Agent 初始化时调用一次。"""
     role_tmpl = ROLE_TEMPLATES.get(market_type, ROLE_TEMPLATES["crypto"])
     role = role_tmpl.format(name=profile.name)
     personality = _build_personality_section(profile, market_type)
@@ -74,23 +69,15 @@ def generate_system_prompt(
         '- "personality_influence": string (which trait dominated this decision)\n\n'
         f"Example response:\n{json_example}"
     )
-    # 行动指引：鼓励 LLM 主动决策，避免永远 HOLD
     action_guide = (
         "## Decision Guidelines\n"
-        "- You are an ACTIVE trader, not a passive observer. "
-        "Analyze the data and take positions when you see opportunity.\n"
-        "- BUY = bullish signal, open or add to long position.\n"
-        "- SELL = bearish signal, close existing position or express a short view. "
-        "You SHOULD use SELL when you believe the price will drop, "
-        "regardless of whether you currently hold a position.\n"
-        "- HOLD should ONLY be used when the data is genuinely ambiguous "
-        "or contradicts your trading style. Do NOT default to HOLD out of caution.\n"
-        "- If technical indicators show a clear trend (RSI oversold/overbought, "
-        "MACD crossover, price above/below SMA), you SHOULD act on it.\n"
-        "- Your personality defines HOW you trade (aggressive vs conservative sizing, "
-        "tight vs loose stops), not WHETHER you trade.\n"
-        "- Confidence: 0.3 = low but tradeable, 0.5 = moderate, 0.7+ = high. "
-        "0.4 is sufficient to act. confidence=0.0 is ONLY for HOLD."
+        "- You are an ACTIVE trader. BUY = bullish/open long. "
+        "SELL = bearish/close long or open short.\n"
+        "- SELL when you believe price will drop, regardless of current position.\n"
+        "- HOLD only when data is genuinely ambiguous. Do NOT default to HOLD.\n"
+        "- Act on clear technical signals (RSI extremes, MACD crossover, SMA cross).\n"
+        "- Personality affects sizing/confidence, not whether you trade.\n"
+        "- Confidence: 0.3=low but tradeable, 0.5=moderate, 0.7+=high. 0.0=HOLD only."
     )
     rules = (
         "## Rules\n"
@@ -100,7 +87,25 @@ def generate_system_prompt(
         "- Do NOT wrap the JSON in markdown code fences.\n"
         "You MUST respond with ONLY a valid JSON object."
     )
-    prompt = "\n\n".join([role, personality, hard, output_fmt, action_guide, rules])
+    # 杠杆风险提示（实盘使用高杠杆时注入）
+    leverage_sec = ""
+    if leverage > 1:
+        liq_dist = (1.0 / leverage - 0.004) * 100
+        max_sl = liq_dist * 0.6
+        leverage_sec = (
+            f"## LEVERAGE WARNING (CRITICAL)\n"
+            f"- Trading with {leverage}x leverage.\n"
+            f"- Liquidation distance: ~{liq_dist:.1f}% from entry.\n"
+            f"- Your stop_loss MUST be within {max_sl:.1f}% of entry price. "
+            f"A 12% stop-loss at {leverage}x means {12*leverage}% margin loss = instant liquidation.\n"
+            f"- Recommended SL: 0.3%-0.8% | TP: 0.5%-1.5% (R:R 1:1.5 to 1:2).\n"
+            f"- Set TIGHT stops. Your personality affects sizing and confidence, NOT stop distance."
+        )
+    parts = [role, personality, hard, output_fmt, action_guide]
+    if leverage_sec:
+        parts.append(leverage_sec)
+    parts.append(rules)
+    prompt = "\n\n".join(parts)
     prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()[:12]
     prompt += f"\n\n[prompt_version: {prompt_hash}]"
     return prompt

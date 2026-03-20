@@ -44,8 +44,9 @@ class TradingAgent(BaseAgent):
         constraints: TradingConstraints, llm_config: dict,
         market_feed: DataFeed, redis_bus: RedisBus,
         market_type: str = "crypto",
+        leverage: int = 1, mmr: float = 0.004,
     ) -> None:
-        """初始化交易 Agent。market_type 决定 Prompt 风格和市场知识。"""
+        """初始化交易 Agent。leverage>1 时自动注入杠杆风险约束。"""
         super().__init__(agent_id, profile.name)
         self._profile: OceanProfile = profile
         self._constraints: TradingConstraints = constraints
@@ -55,20 +56,19 @@ class TradingAgent(BaseAgent):
         self._market_type: str = market_type
         self._memory: AgentMemory = AgentMemory(agent_id, redis_bus)
         self._system_prompt: str = generate_system_prompt(
-            profile, constraints, market_type,
+            profile, constraints, market_type, leverage=leverage,
         )
         self._prompt_hash: str = get_prompt_hash(self._system_prompt)
         self._positions: list[dict] = []
         self._portfolio_value: Decimal = Decimal("10000")
         self._trade_count: int = 0
-        # 匿名化器（可选，由 main.py 注入）
         self._anonymizer: AssetAnonymizer | None = None
-        # 执行策略（默认规则策略，未来可替换为 RL 策略）
         self._strategy: RuleBasedStrategy = RuleBasedStrategy(
             agent_id=agent_id, agent_name=profile.name,
             profile_dump=profile.model_dump(exclude={"name"}),
             prompt_hash=self._prompt_hash,
             llm_model=llm_config.get("model", ""),
+            leverage=leverage, mmr=mmr,
         )
 
     # ── 主循环 ──────────────────────────────────────────

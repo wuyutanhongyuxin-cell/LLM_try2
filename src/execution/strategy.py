@@ -55,13 +55,20 @@ class RuleBasedStrategy(ExecutionStrategy):
     """
 
     def __init__(self, agent_id: str, agent_name: str,
-                 profile_dump: dict, prompt_hash: str, llm_model: str) -> None:
-        """初始化规则策略。"""
+                 profile_dump: dict, prompt_hash: str, llm_model: str,
+                 leverage: int = 1, mmr: float = 0.004) -> None:
         self._agent_id = agent_id
         self._agent_name = agent_name
         self._profile_dump = profile_dump
         self._prompt_hash = prompt_hash
         self._llm_model = llm_model
+        self._leverage = leverage
+        # 杠杆>1 时计算安全 SL 上限: (1/leverage - MMR) × safety_factor
+        if leverage > 1:
+            liq_dist = (1.0 / leverage) - mmr
+            self._max_sl_pct = liq_dist * 0.6 * 100  # 60% 安全系数，转百分比
+        else:
+            self._max_sl_pct = 100.0  # 无杠杆不限制
 
     def process_signal(
         self,
@@ -88,13 +95,20 @@ class RuleBasedStrategy(ExecutionStrategy):
         if constraints.require_stop_loss and stop_loss is None:
             logger.warning(f"[{self._agent_name}] 缺少止损价格，约束要求必须设置")
             return None
+        entry = float(raw_data.get("entry_price", snapshot.price))
+        take_profit: float | None = raw_data.get("take_profit_price")
+        # 杠杆感知 SL/TP clip：防止爆仓
+        if self._leverage > 1 and entry > 0:
+            stop_loss, take_profit = self._clip_sl_tp(
+                action_str, entry, stop_loss, take_profit,
+            )
         return TradeSignal(
             agent_id=self._agent_id, agent_name=self._agent_name,
             timestamp=datetime.now(tz=timezone.utc),
             action=Action(action_str), asset=asset, size_pct=size_pct,
-            entry_price=float(raw_data.get("entry_price", snapshot.price)),
+            entry_price=entry,
             stop_loss_price=stop_loss,
-            take_profit_price=raw_data.get("take_profit_price"),
+            take_profit_price=take_profit,
             confidence=confidence,
             reasoning=str(raw_data.get("reasoning", "")),
             personality_influence=str(raw_data.get("personality_influence", "")),
@@ -102,3 +116,27 @@ class RuleBasedStrategy(ExecutionStrategy):
             prompt_hash=self._prompt_hash,
             llm_model=self._llm_model,
         )
+
+    def _clip_sl_tp(
+        self, action: str, entry: float, sl: float | None, tp: float | None,
+    ) -> tuple[float | None, float | None]:
+        """杠杆感知 SL/TP clip：确保 SL 距离不超过爆仓安全阈值。"""
+        max_dist = entry * self._max_sl_pct / 100.0
+        if sl is not None:
+            dist = abs(entry - sl)
+            if dist > max_dist:
+                old_sl = sl
+                # BUY: SL 在下方; SELL: SL 在上方
+                sl = entry - max_dist if action == "BUY" else entry + max_dist
+                logger.warning(
+                    f"[{self._agent_name}] SL 距离 {dist/entry*100:.1f}% 超限 "
+                    f"({self._max_sl_pct:.1f}%), clip {old_sl:.0f}→{sl:.0f}")
+        if tp is not None:
+            # TP 限制为 SL 距离的 3 倍（最大 R:R 3:1）
+            max_tp_dist = max_dist * 3
+            tp_dist = abs(entry - tp)
+            if tp_dist > max_tp_dist:
+                old_tp = tp
+                tp = entry + max_tp_dist if action == "BUY" else entry - max_tp_dist
+                logger.info(f"[{self._agent_name}] TP clip {old_tp:.0f}→{tp:.0f}")
+        return sl, tp

@@ -58,6 +58,7 @@ async def decision_loop(
     redis_bus: RedisBus, telegram: TelegramNotifier,
     llm_config: dict, profile_name: str, interval: int,
     capital: float, asset_config: dict,
+    leverage: int = 1, mmr: float = 0.004,
 ) -> None:
     """Agent 决策主循环：行情→LLM决策→实盘执行→通知。"""
     from src.agent.trading_agent import TradingAgent, _snapshot_to_dict
@@ -69,6 +70,7 @@ async def decision_loop(
         agent_id=f"live_{profile_name}", profile=profile,
         constraints=constraints, llm_config=llm_config,
         market_feed=feed, redis_bus=redis_bus,
+        leverage=leverage, mmr=mmr,
     )
     agent._portfolio_value = Decimal(str(capital))
     asset = constraints.allowed_assets[0]
@@ -143,6 +145,8 @@ async def main() -> None:
     ticker = args.ticker or lighter_cfg.get("ticker", "BTC")
     interval = args.interval or lighter_cfg.get("default_interval_seconds", 300)
     max_pos = Decimal(str(args.max_position or lighter_cfg.get("max_position_btc", 0.01)))
+    leverage = lighter_cfg.get("leverage", 1)
+    mmr = lighter_cfg.get("maintenance_margin_rate", 0.004)
     profile = get_profile(args.agent)
     asset_config = _build_asset_config(ticker)
 
@@ -168,7 +172,7 @@ async def main() -> None:
 
     mode = "DRY-RUN" if args.dry_run else "LIVE"
     o, c, e, a, n = profile.openness, profile.conscientiousness, profile.extraversion, profile.agreeableness, profile.neuroticism
-    msg = f"🚀 Lighter [{mode}] | {args.agent} (O{o}/C{c}/E{e}/A{a}/N{n}) | {ticker} {interval}s"
+    msg = f"🚀 Lighter [{mode}] {leverage}x | {args.agent} (O{o}/C{c}/E{e}/A{a}/N{n}) | {ticker} {interval}s"
     logger.info(msg)
     await telegram.send_message(msg)
 
@@ -179,6 +183,7 @@ async def main() -> None:
     task = asyncio.create_task(decision_loop(
         feed, executor, redis_bus, telegram,
         llm_cfg, args.agent, interval, args.capital, asset_config,
+        leverage=leverage, mmr=mmr,
     ))
 
     await shutdown_event.wait()
