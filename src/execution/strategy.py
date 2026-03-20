@@ -81,10 +81,6 @@ class RuleBasedStrategy(ExecutionStrategy):
             return None
         size_pct = _clip(float(raw_data.get("size_pct", 0)), 0, constraints.max_position_pct)
         confidence = _clip(float(raw_data.get("confidence", 0)), 0.0, 1.0)
-        # DeepSeek 兜底：BUY/SELL 返回 confidence=0.0 时，提升到 0.3（低信心但可交易）
-        if action_str in ("BUY", "SELL") and confidence < 0.01:
-            confidence = 0.3
-            logger.info(f"[{self._agent_name}] confidence=0 兜底 → 0.3")
         if confidence < constraints.min_confidence_threshold:
             logger.info(f"[{self._agent_name}] 信心不足 {confidence:.2f}，跳过")
             return None
