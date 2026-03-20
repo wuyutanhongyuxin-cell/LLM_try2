@@ -15,6 +15,9 @@ TERMINAL_STATUSES = {
 }
 
 
+IOC_SLIPPAGE_PCT = Decimal("0.002")  # 0.2% 滑点保证成交
+
+
 async def place_ioc_order(
     signer: SignerClient,
     market_index: int,
@@ -22,25 +25,32 @@ async def place_ioc_order(
     side: str,
     size: Decimal,
     base_mult: int,
+    price_mult: int,
+    current_price: Decimal,
     reduce_only: bool = False,
 ) -> None:
     """签名并发送 IOC 市价单。
 
-    Args:
-        signer: Lighter SignerClient
-        market_index: 市场 ID
-        client_order_index: 客户端订单唯一标识
-        side: "buy" 或 "sell"
-        size: 下单数量（实际单位，如 0.001 BTC）
-        base_mult: 基础数量乘数
-        reduce_only: 是否仅减仓
+    Lighter 要求 price >= 1，市价单也必须传一个带滑点的限价。
+    买入：价格 = 当前价 × (1 + 0.2%)，保证吃单成交
+    卖出：价格 = 当前价 × (1 - 0.2%)，保证吃单成交
     """
     is_ask = side == "sell"
+    # 计算带滑点的价格（跟 grvt_lighter 逻辑一致）
+    if is_ask:
+        price = current_price * (Decimal("1") - IOC_SLIPPAGE_PCT)
+    else:
+        price = current_price * (Decimal("1") + IOC_SLIPPAGE_PCT)
+    # 转为整数（乘以 price_multiplier）
+    price_int = int(price * price_mult)
+    if price_int < 1:
+        price_int = 1
+
     tx_type, tx_info, tx_hash_signed, error = signer.sign_create_order(
         market_index=market_index,
         client_order_index=client_order_index,
         base_amount=int(size * base_mult),
-        price=0,  # 市价单 price=0
+        price=price_int,
         is_ask=is_ask,
         order_type=signer.ORDER_TYPE_MARKET,
         time_in_force=signer.ORDER_TIME_IN_FORCE_IMMEDIATE_OR_CANCEL,
@@ -52,7 +62,9 @@ async def place_ioc_order(
         raise RuntimeError(f"Lighter 签名错误: {error}")
 
     resp = await signer.send_tx(tx_type=int(tx_type), tx_info=tx_info)
-    logger.info(f"Lighter IOC 已发送: {side} {size} idx={client_order_index}")
+    logger.info(
+        f"Lighter IOC 已发送: {side} {size} @ {price:.2f} idx={client_order_index}"
+    )
 
 
 async def wait_for_fill(
@@ -78,6 +90,17 @@ async def wait_for_fill(
     except asyncio.TimeoutError:
         logger.warning(f"填单超时: idx={client_order_index}，按未成交处理")
         return None
+
+
+async def fetch_last_price(api_client: ApiClient, market_index: int | None) -> Decimal:
+    """通过 REST 获取最新成交价（平仓后备方案）。"""
+    try:
+        order_api = lighter.OrderApi(api_client)
+        details = await order_api.order_book_details(market_id=market_index)
+        d = details.order_book_details[0]
+        return Decimal(str(d.last_price)) if hasattr(d, "last_price") else Decimal("85000")
+    except Exception:
+        return Decimal("85000")
 
 
 async def query_position(

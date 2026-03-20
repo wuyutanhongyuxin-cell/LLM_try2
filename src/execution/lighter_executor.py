@@ -10,7 +10,7 @@ from lighter import ApiClient, Configuration, SignerClient
 from loguru import logger
 
 from src.execution.lighter_helpers import (
-    place_ioc_order, query_balance, query_position, wait_for_fill,
+    fetch_last_price, place_ioc_order, query_balance, query_position, wait_for_fill,
 )
 from src.execution.signal import Action, TradeSignal
 
@@ -34,17 +34,14 @@ class LighterExecutor:
         self._signer: SignerClient | None = None
         self._api_client: ApiClient | None = None
         self._market_index: int | None = None
-        self._base_mult: int = 1
-        self._ticker: str = ""
+        self._base_mult = self._price_mult = 1
+        self._ticker, self._last_price = "", Decimal("0")
         self._pending_fills: dict[int, asyncio.Event] = {}
         self._fill_results: dict[int, dict] = {}
-        self._local_position = Decimal("0")
-        self._realized_pnl = Decimal("0")
-        self._trade_count = 0
-        self._consecutive_losses = 0
+        self._local_position = self._realized_pnl = Decimal("0")
+        self._trade_count = self._consecutive_losses = 0
 
     async def connect(self, ticker: str) -> None:
-        """连接 Lighter，获取市场配置并同步仓位。"""
         self._ticker = ticker
         self._api_client = ApiClient(configuration=Configuration(host=BASE_URL))
         self._signer = SignerClient(
@@ -77,6 +74,7 @@ class LighterExecutor:
         """执行交易信号，返回是否成功。"""
         if signal.action == Action.HOLD:
             return False
+        self._last_price = current_price
         balance = await self.get_balance()
         if balance < self._min_balance:
             logger.warning(f"余额不足: {balance} < {self._min_balance}")
@@ -84,7 +82,7 @@ class LighterExecutor:
         if signal.action == Action.BUY:
             return await self._execute_buy(signal, balance, current_price)
         if signal.action == Action.SELL:
-            return await self._execute_sell(signal)
+            return await self._execute_sell(signal, current_price)
         return False
 
     async def _execute_buy(
@@ -97,17 +95,17 @@ class LighterExecutor:
             logger.warning("已达最大仓位限制")
             return False
         size_btc = min(size_btc, remaining)
-        return await self._place_and_confirm("buy", size_btc, signal)
+        return await self._place_and_confirm("buy", size_btc, signal, price)
 
-    async def _execute_sell(self, signal: TradeSignal) -> bool:
+    async def _execute_sell(self, signal: TradeSignal, price: Decimal) -> bool:
         if self._local_position <= 0:
             logger.info("无仓位可卖")
             return False
         return await self._place_and_confirm(
-            "sell", self._local_position, signal,
+            "sell", self._local_position, signal, price,
         )
 
-    async def _place_and_confirm(self, side: str, size: Decimal, signal: TradeSignal) -> bool:
+    async def _place_and_confirm(self, side: str, size: Decimal, signal: TradeSignal, price: Decimal) -> bool:
         if self._dry_run:
             logger.info(
                 f"[DRY-RUN] {side.upper()} {size} {self._ticker} "
@@ -123,6 +121,7 @@ class LighterExecutor:
             await place_ioc_order(
                 self._signer, self._market_index,
                 idx, side, size, self._base_mult,
+                self._price_mult, price,
             )
             fill = await wait_for_fill(
                 event, self._fill_results, idx, self._fill_timeout,
@@ -176,7 +175,9 @@ class LighterExecutor:
         event = asyncio.Event()
         self._pending_fills[idx] = event
         try:
-            await place_ioc_order(self._signer, self._market_index, idx, side, abs(pos), self._base_mult, reduce_only=True)
+            # 平仓用最近价格；如果没有则查 REST
+            close_price = self._last_price if self._last_price > 0 else await fetch_last_price(self._api_client, self._market_index)
+            await place_ioc_order(self._signer, self._market_index, idx, side, abs(pos), self._base_mult, self._price_mult, close_price, reduce_only=True)
             try:
                 await asyncio.wait_for(event.wait(), timeout=3.0)
             except asyncio.TimeoutError:
