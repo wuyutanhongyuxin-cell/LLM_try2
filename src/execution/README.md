@@ -15,7 +15,7 @@
 - `cost_model.py` — 交易成本：滑点+手续费+funding（~90行）
 - `consistency_monitor.py` — 行为漂移检测：三级KL阈值（~120行）
 - `debate.py` — Bull/Bear 辩论模块（TradingAgents 启发）（~110行）
-- `strategy.py` — ExecutionStrategy 接口 + RuleBasedStrategy + confidence兜底（~107行）
+- `strategy.py` — ExecutionStrategy 接口 + RuleBasedStrategy（~104行）
 
 ## 依赖关系
 - 本目录依赖：pydantic, decimal, litellm, lighter-sdk
