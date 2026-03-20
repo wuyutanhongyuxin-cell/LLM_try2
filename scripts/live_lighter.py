@@ -2,11 +2,8 @@
 """Lighter DEX 单 Agent 实盘入口。"""
 from __future__ import annotations
 
-import argparse
-import asyncio
-import os
-import signal
-import sys
+import argparse, asyncio, os, signal, sys
+from contextlib import suppress
 from decimal import Decimal
 
 from dotenv import load_dotenv
@@ -117,14 +114,17 @@ async def decision_loop(
                 agent._memory.add_trade_result(sig.model_dump())
                 await agent._memory.save_trade_to_l2(sig.model_dump())
                 agent._trade_count += 1
-                # 每 10 笔交易触发 L3 反思（自动归档到 L4 永久记忆）
+                # 每 10 笔触发 L3 反思（自动归档到 L4）
                 if agent._trade_count % 10 == 0:
                     await agent._trigger_reflection()
-                # 每 50 笔交易：压缩智慧（>=500笔时附带投票淘汰）
-                if agent._trade_count % 50 == 0:
+                # 每 500 笔：10轮LLM投票提取智慧
+                if agent._trade_count % 500 == 0:
+                    await agent._memory._long_term.extract_wisdom(profile, llm_config)
+                # 每 1000 笔：10轮LLM投票淘汰过时经验
+                if agent._trade_count % 1000 == 0:
                     recent = await agent._memory.get_recent_trades(10)
-                    await agent._memory._long_term.review_and_compress(
-                        profile, llm_config, recent, agent._trade_count,
+                    await agent._memory._long_term.prune_outdated(
+                        profile, llm_config, recent,
                     )
         except asyncio.CancelledError:
             raise
@@ -183,10 +183,8 @@ async def main() -> None:
     logger.info("收到 Ctrl+C，正在平仓...")
 
     task.cancel()
-    try:
+    with suppress(asyncio.CancelledError):
         await task
-    except asyncio.CancelledError:
-        pass
     ok = await executor.close_all_positions()
     await telegram.send_message(f"🛑 停止 | 平仓{'成功' if ok else '失败'}")
     await feed.disconnect()
