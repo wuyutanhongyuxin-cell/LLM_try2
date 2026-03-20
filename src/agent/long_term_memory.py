@@ -24,7 +24,8 @@ from src.personality.ocean_model import OceanProfile
 
 _MEMORY_DIR = Path("data/memory")
 _MAX_RETRIES = 2
-_MIN_ENTRIES_FOR_PRUNE = 10  # 低于此数量不触发淘汰
+_MIN_ENTRIES_FOR_PRUNE = 10   # 归档低于此数量不触发淘汰
+_MIN_TRADES_FOR_PRUNE = 500   # 总交易数低于此不触发淘汰
 
 
 class LongTermMemory:
@@ -79,13 +80,23 @@ class LongTermMemory:
     async def review_and_compress(
         self, profile: OceanProfile, llm_config: dict,
         recent_trades: list[dict] | None = None,
+        total_trades: int = 0,
     ) -> bool:
-        """先投票淘汰过时经验，再压缩交易智慧。"""
+        """先投票淘汰过时经验，再压缩交易智慧。
+
+        淘汰条件（全部满足才触发）：
+        - 归档反思 >= 10 条
+        - 总交易数 >= 500 笔（确保有足够数据支撑判断）
+        """
         entries = self.get_all_archived()
         if not entries:
             return False
-        # 步骤1：投票淘汰（>= 10 条才触发）
-        if len(entries) >= _MIN_ENTRIES_FOR_PRUNE:
+        # 步骤1：投票淘汰（条件严格：归档>=10 且 总交易>=500）
+        if len(entries) >= _MIN_ENTRIES_FOR_PRUNE and total_trades >= _MIN_TRADES_FOR_PRUNE:
+            logger.info(
+                f"[{self._agent_id}] 触发记忆淘汰投票 "
+                f"(归档{len(entries)}条, 交易{total_trades}笔)"
+            )
             prune_ids = await vote_prune_entries(
                 entries, profile, llm_config, recent_trades,
             )

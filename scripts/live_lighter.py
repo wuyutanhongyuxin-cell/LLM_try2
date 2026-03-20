@@ -116,11 +116,11 @@ async def decision_loop(
                 # 每 10 笔交易触发 L3 反思（自动归档到 L4 永久记忆）
                 if agent._trade_count % 10 == 0:
                     await agent._trigger_reflection()
-                # 每 50 笔交易：投票淘汰过时经验 + 压缩交易智慧
+                # 每 50 笔交易：压缩智慧（>=500笔时附带投票淘汰）
                 if agent._trade_count % 50 == 0:
                     recent = await agent._memory.get_recent_trades(10)
                     await agent._memory._long_term.review_and_compress(
-                        profile, llm_config, recent,
+                        profile, llm_config, recent, agent._trade_count,
                     )
         except asyncio.CancelledError:
             raise

@@ -14,8 +14,8 @@ from litellm import acompletion
 
 from src.personality.ocean_model import OceanProfile
 
-_VOTE_ROUNDS = 3          # 投票轮数
-_PRUNE_THRESHOLD = 2 / 3  # 淘汰阈值：超过 2/3 票
+_VOTE_ROUNDS = 10         # 投票轮数（10次独立LLM调用）
+_PRUNE_THRESHOLD = 2 / 3  # 淘汰阈值：超过 2/3 票（即 ≥7/10）
 
 
 async def vote_prune_entries(
