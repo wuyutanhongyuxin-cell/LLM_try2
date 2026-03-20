@@ -118,6 +118,9 @@ async def decision_loop(
                 agent._memory.add_trade_result(sig.model_dump())
                 await agent._memory.save_trade_to_l2(sig.model_dump())
                 agent._trade_count += 1
+                # 每 10 笔交易触发 L3 反思（压缩历史经验供未来决策参考）
+                if agent._trade_count % 10 == 0:
+                    await agent._trigger_reflection()
         except asyncio.CancelledError:
             raise
         except Exception as exc:
