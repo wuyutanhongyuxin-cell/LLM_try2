@@ -111,12 +111,15 @@ class TestExecuteSell:
         acc = trader._accounts["agent_a"]
         assert len(acc.positions) == 0
 
-    def test_sell_without_position_fails(self, trader: PaperTrader) -> None:
-        """无持仓卖出应失败。"""
+    def test_sell_without_position_opens_short(self, trader: PaperTrader) -> None:
+        """无持仓时 SELL 开空仓。"""
         trader._current_prices = {"BTC-PERP": 67200.0}
         signal = _make_signal(action=Action.SELL)
         result = trader.execute_signal(signal)
-        assert result is False
+        assert result is True
+        acc = trader._accounts["agent_a"]
+        assert len(acc.positions) == 1
+        assert acc.positions[0].side == "SHORT"
 
     def test_sell_records_closed_trade(self, trader: PaperTrader) -> None:
         """卖出后记录已平仓交易。"""
@@ -185,6 +188,64 @@ class TestStopLossTakeProfit:
         events = trader.update_prices({"BTC-PERP": 68000.0})
         assert len(events) == 0
         assert len(trader._accounts["agent_a"].positions) == 1
+
+
+# ── SHORT 做空测试 ────────────────────────────────────────
+
+class TestShortPositions:
+    """测试空仓相关逻辑。"""
+
+    def test_sell_opens_short(self, trader: PaperTrader) -> None:
+        """无持仓时 SELL 开空仓。"""
+        trader._current_prices = {"BTC-PERP": 67200.0}
+        signal = _make_signal(action=Action.SELL)
+        assert trader.execute_signal(signal) is True
+        pos = trader._accounts["agent_a"].positions[0]
+        assert pos.side == "SHORT"
+
+    def test_buy_closes_short(self, trader: PaperTrader) -> None:
+        """持有空仓时 BUY 平空。"""
+        trader._current_prices = {"BTC-PERP": 67200.0}
+        trader.execute_signal(_make_signal(action=Action.SELL))
+        trader.execute_signal(_make_signal(action=Action.BUY, entry_price=66000.0))
+        acc = trader._accounts["agent_a"]
+        assert len(acc.positions) == 0
+        assert len(acc.closed_trades) == 1
+        # 空仓卖67200买66000，应该盈利
+        assert acc.closed_trades[0]["pnl"] > 0
+
+    def test_short_stop_loss_on_price_rise(self, trader: PaperTrader) -> None:
+        """空仓止损：价格上涨超过 SL 触发。"""
+        trader._current_prices = {"BTC-PERP": 67200.0}
+        signal = _make_signal(
+            action=Action.SELL, stop_loss_price=69000.0, take_profit_price=64000.0,
+        )
+        trader.execute_signal(signal)
+        events = trader.update_prices({"BTC-PERP": 70000.0})
+        assert len(events) == 1
+        assert events[0]["reason"] == "STOP_LOSS"
+        assert events[0]["pnl"] < 0  # 空仓价格上涨=亏损
+
+    def test_short_take_profit_on_price_drop(self, trader: PaperTrader) -> None:
+        """空仓止盈：价格下跌低于 TP 触发。"""
+        trader._current_prices = {"BTC-PERP": 67200.0}
+        signal = _make_signal(
+            action=Action.SELL, stop_loss_price=69000.0, take_profit_price=64000.0,
+        )
+        trader.execute_signal(signal)
+        events = trader.update_prices({"BTC-PERP": 63000.0})
+        assert len(events) == 1
+        assert events[0]["reason"] == "TAKE_PROFIT"
+        assert events[0]["pnl"] > 0  # 空仓价格下跌=盈利
+
+    def test_short_unrealized_pnl(self, trader: PaperTrader) -> None:
+        """空仓未实现盈亏：价格下跌时为正。"""
+        trader._current_prices = {"BTC-PERP": 67200.0}
+        trader.execute_signal(_make_signal(action=Action.SELL))
+        acc = trader._accounts["agent_a"]
+        # 价格从67200跌到65000，空仓盈利
+        pnl = acc.get_unrealized_pnl({"BTC-PERP": 65000.0})
+        assert pnl > 0
 
 
 # ── 排行榜 ──────────────────────────────────────────────

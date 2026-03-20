@@ -5,9 +5,9 @@
 
 ## 文件清单
 - `signal.py` — TradeSignal 数据结构（~42行）
-- `account.py` — AgentAccount 虚拟账户（~178行）
-- `paper_trader.py` — PaperTrader 纸上交易管理器（~109行）
-- `lighter_executor.py` — Lighter DEX 实盘执行器：IOC 市价单+REST仓位确认（~176行）
+- `account.py` — AgentAccount 虚拟账户：LONG/SHORT 双向持仓+SL/TP（~201行）
+- `paper_trader.py` — PaperTrader 纸上交易管理器（~124行）
+- `lighter_executor.py` — Lighter DEX 实盘执行器：双向交易+REST仓位确认（~181行）
 - `lighter_helpers.py` — Lighter 辅助函数：下单签名、账户查询（~137行）
 - `stats_helper.py` — Sharpe / MaxDD / 胜率 / 盈亏比计算（~75行）
 - `aggregator.py` — 信号聚合器 independent + voting + 辩论模式（~110行）
