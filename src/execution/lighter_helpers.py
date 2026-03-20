@@ -127,8 +127,8 @@ async def query_leverage(
 ) -> int:
     """从 Lighter 账户读取指定市场的杠杆倍数。
 
-    通过 initial_margin_fraction 反算：leverage = 10000 / IMF。
-    无持仓时返回 0（表示未设置，需用配置文件兜底）。
+    通过 initial_margin_fraction 反算：leverage = 100 / IMF（IMF 单位为百分比）。
+    例：IMF=2.00 → 100/2=50x。无持仓时返回 0（需用配置文件兜底）。
     """
     try:
         account_api = lighter.AccountApi(api_client)
@@ -136,10 +136,10 @@ async def query_leverage(
         if data and data.accounts:
             for pos in data.accounts[0].positions:
                 if pos.market_id == market_index:
-                    imf = int(float(pos.initial_margin_fraction))
+                    imf = float(pos.initial_margin_fraction)
                     if imf > 0:
-                        lev = 10000 // imf
-                        logger.info(f"Lighter 杠杆读取: IMF={imf} → {lev}x")
+                        lev = int(100 / imf)
+                        logger.info(f"Lighter 杠杆读取: IMF={imf}% → {lev}x")
                         return lev
         return 0
     except Exception as e:
