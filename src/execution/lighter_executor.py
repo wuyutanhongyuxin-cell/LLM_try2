@@ -10,7 +10,7 @@ from lighter import ApiClient, Configuration, SignerClient
 from loguru import logger
 
 from src.execution.lighter_helpers import (
-    fetch_last_price, place_ioc_order, query_balance, query_position,
+    fetch_last_price, place_ioc_order, query_balance, query_leverage, query_position,
 )
 from src.execution.signal import Action, TradeSignal
 
@@ -50,7 +50,14 @@ class LighterExecutor:
             raise RuntimeError(f"Lighter SignerClient 检查失败: {err}")
         await self._fetch_market_config()
         self._local_position = await self.get_position()
-        logger.info(f"Lighter 执行器就绪: {ticker} 仓位={self._local_position}")
+        # 自动读取账户杠杆（有持仓时可读取）
+        self._detected_leverage = await query_leverage(
+            self._api_client, self._account_index, self._market_index,
+        )
+        logger.info(
+            f"Lighter 执行器就绪: {ticker} 仓位={self._local_position} "
+            f"杠杆={self._detected_leverage}x"
+        )
 
     async def disconnect(self) -> None:
         if self._api_client:

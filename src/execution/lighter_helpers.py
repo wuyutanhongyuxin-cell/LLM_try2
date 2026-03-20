@@ -122,6 +122,31 @@ async def query_position(
         return Decimal("0")
 
 
+async def query_leverage(
+    api_client: ApiClient, account_index: int, market_index: int | None,
+) -> int:
+    """从 Lighter 账户读取指定市场的杠杆倍数。
+
+    通过 initial_margin_fraction 反算：leverage = 10000 / IMF。
+    无持仓时返回 0（表示未设置，需用配置文件兜底）。
+    """
+    try:
+        account_api = lighter.AccountApi(api_client)
+        data = await account_api.account(by="index", value=str(account_index))
+        if data and data.accounts:
+            for pos in data.accounts[0].positions:
+                if pos.market_id == market_index:
+                    imf = int(pos.initial_margin_fraction)
+                    if imf > 0:
+                        lev = 10000 // imf
+                        logger.info(f"Lighter 杠杆读取: IMF={imf} → {lev}x")
+                        return lev
+        return 0
+    except Exception as e:
+        logger.warning(f"查询杠杆失败: {e}")
+        return 0
+
+
 async def query_balance(api_client: ApiClient, account_index: int) -> Decimal:
     """查询 Lighter 账户可用余额。"""
     try:

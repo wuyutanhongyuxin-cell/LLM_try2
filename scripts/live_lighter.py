@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lighter DEX 单 Agent 实盘入口。"""
+"""Lighter DEX 实盘入口（自动读取链上杠杆）。"""
 from __future__ import annotations
 
 import argparse, asyncio, os, signal, sys
@@ -42,11 +42,9 @@ def _build_asset_config(ticker: str) -> dict[str, list[str]]:
 
 
 async def resolve_market_index(ticker: str) -> int:
-    """通过 Lighter API 查询 ticker 对应的 market_index。"""
     import lighter as sdk
     api = sdk.ApiClient(configuration=sdk.Configuration(host="https://mainnet.zklighter.elliot.ai"))
-    obs = await sdk.OrderApi(api).order_books()
-    await api.close()
+    obs, _ = await sdk.OrderApi(api).order_books(), await api.close()
     for m in obs.order_books:
         if m.symbol == ticker:
             return m.market_id
@@ -58,9 +56,8 @@ async def decision_loop(
     redis_bus: RedisBus, telegram: TelegramNotifier,
     llm_config: dict, profile_name: str, interval: int,
     capital: float, asset_config: dict,
-    leverage: int = 1, mmr: float = 0.004,
+    leverage: int = 1, mmr: float = 0.012,
 ) -> None:
-    """Agent 决策主循环：行情→LLM决策→实盘执行→通知。"""
     from src.agent.trading_agent import TradingAgent, _snapshot_to_dict
     from src.personality.prompt_generator import generate_decision_prompt
 
@@ -170,6 +167,11 @@ async def main() -> None:
         logger.error(f"初始化失败: {e}")
         return
 
+    # 链上杠杆优先，配置兜底
+    if executor._detected_leverage > 0:
+        leverage = executor._detected_leverage
+    logger.info(f"杠杆: {leverage}x {'(链上)' if executor._detected_leverage > 0 else '(配置)'}")
+
     mode = "DRY-RUN" if args.dry_run else "LIVE"
     o, c, e, a, n = profile.openness, profile.conscientiousness, profile.extraversion, profile.agreeableness, profile.neuroticism
     msg = f"🚀 Lighter [{mode}] {leverage}x | {args.agent} (O{o}/C{c}/E{e}/A{a}/N{n}) | {ticker} {interval}s"
@@ -194,10 +196,8 @@ async def main() -> None:
         await task
     ok = await executor.close_all_positions()
     await telegram.send_message(f"🛑 停止 | 平仓{'成功' if ok else '失败'}")
-    await feed.disconnect()
-    await executor.disconnect()
-    await redis_bus.close()
-    await telegram.close()
+    for coro in [feed.disconnect(), executor.disconnect(), redis_bus.close(), telegram.close()]:
+        await coro
     logger.info("已退出")
 
 
