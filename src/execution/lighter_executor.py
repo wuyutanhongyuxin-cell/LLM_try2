@@ -79,7 +79,7 @@ class LighterExecutor:
         if signal.action == Action.BUY:
             return await self._execute_buy(signal, balance, current_price)
         if signal.action == Action.SELL:
-            return await self._execute_sell(signal, current_price)
+            return await self._execute_sell(signal, balance, current_price)
         return False
 
     async def _execute_buy(
@@ -94,13 +94,19 @@ class LighterExecutor:
         size_btc = min(size_btc, remaining)
         return await self._place_and_confirm("buy", size_btc, signal, price)
 
-    async def _execute_sell(self, signal: TradeSignal, price: Decimal) -> bool:
-        if self._local_position <= 0:
-            logger.info("无仓位可卖")
+    async def _execute_sell(
+        self, signal: TradeSignal, balance: Decimal, price: Decimal,
+    ) -> bool:
+        """SELL = 平多仓 或 开空仓（永续合约支持做空）。"""
+        # 可卖额度 = max_position + 当前仓位（正=多仓可卖+开空，负=已空）
+        remaining = self._max_position + self._local_position
+        if remaining <= 0:
+            logger.warning("已达最大空仓限制")
             return False
-        return await self._place_and_confirm(
-            "sell", self._local_position, signal, price,
-        )
+        size_usd = balance * Decimal(str(signal.size_pct)) / Decimal("100")
+        size_btc = size_usd / price
+        size_btc = min(size_btc, remaining)
+        return await self._place_and_confirm("sell", size_btc, signal, price)
 
     async def _place_and_confirm(self, side: str, size: Decimal, signal: TradeSignal, price: Decimal) -> bool:
         if self._dry_run:

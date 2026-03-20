@@ -109,10 +109,20 @@ class TestExecuteSignal:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_sell_no_position(self) -> None:
-        """无仓位时卖出返回 False。"""
+    async def test_sell_no_position_opens_short(self) -> None:
+        """无仓位时 SELL 开空仓（永续合约支持做空）。"""
         ex = LighterExecutor(dry_run=True)
         ex._local_position = Decimal("0")
+        ex.get_balance = AsyncMock(return_value=Decimal("1000"))
+        signal = _make_signal(Action.SELL)
+        result = await ex.execute_signal(signal, Decimal("67000"))
+        assert result is True  # dry-run 模式下开空成功
+
+    @pytest.mark.asyncio
+    async def test_sell_max_short_blocked(self) -> None:
+        """已达最大空仓时 SELL 被阻止。"""
+        ex = LighterExecutor(dry_run=True, max_position=Decimal("0.01"))
+        ex._local_position = Decimal("-0.01")  # 已满空仓
         ex.get_balance = AsyncMock(return_value=Decimal("1000"))
         signal = _make_signal(Action.SELL)
         result = await ex.execute_signal(signal, Decimal("67000"))

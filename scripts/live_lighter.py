@@ -79,18 +79,20 @@ async def decision_loop(
             if snapshot is None:
                 await asyncio.sleep(interval)
                 continue
-            # 同步真实仓位，让 LLM 看到实际持仓
+            # 同步真实仓位（多仓/空仓均展示给 LLM）
             real_pos = executor._local_position
-            if real_pos > 0:
+            if real_pos != 0:
+                direction = "LONG" if real_pos > 0 else "SHORT"
                 agent._positions = [{
                     "asset": asset, "size": float(real_pos),
+                    "direction": direction,
                     "entry_price": float(executor._last_price or snapshot.price),
                     "unrealized_pnl": 0.0,
                 }]
             else:
                 agent._positions = []
             bal = await executor.get_balance()
-            agent._portfolio_value = bal + real_pos * Decimal(str(snapshot.price))
+            agent._portfolio_value = bal + abs(real_pos) * Decimal(str(snapshot.price))
             ctx = await agent._memory.get_context_for_decision(asset, "")
             prompt = generate_decision_prompt(
                 _snapshot_to_dict(snapshot), agent._positions,
