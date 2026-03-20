@@ -73,6 +73,8 @@ async def decision_loop(
     )
     agent._portfolio_value = Decimal(str(capital))
     asset = constraints.allowed_assets[0]
+    # 预热跳过：第一个 BUY/SELL 信号数据不足，跳过不执行
+    warmup_skipped = False
 
     while True:
         try:
@@ -108,6 +110,20 @@ async def decision_loop(
                 sig = await agent._multi_sample_decision(prompt, snapshot, n, thr)
             if sig is None:
                 logger.info(f"[{profile_name}] HOLD")
+                await asyncio.sleep(interval)
+                continue
+            # 预热跳过：首个 BUY/SELL 信号冷启动数据不足，跳过不下单
+            if not warmup_skipped:
+                warmup_skipped = True
+                logger.warning(
+                    f"[{profile_name}] ⏭️ 预热跳过首信号: "
+                    f"{sig.action.value} {sig.asset} @ ${sig.entry_price:,.2f} "
+                    f"conf={sig.confidence:.2f} | 原因: 冷启动数据不足"
+                )
+                await telegram.send_message(
+                    f"⏭️ 预热跳过首信号: {sig.action.value} {sig.asset} "
+                    f"@ ${sig.entry_price:,.2f} conf={sig.confidence:.2f}"
+                )
                 await asyncio.sleep(interval)
                 continue
             mid = feed.get_mid_price() or Decimal(str(snapshot.price))
