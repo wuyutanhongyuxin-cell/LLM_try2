@@ -162,6 +162,21 @@ def generate_decision_prompt(
         market_lines.append(
             f"- MACD Histogram: {market_data['macd_histogram']:.4f} "
             f"[{market_data.get('macd_signal', 'N/A')}]")
+    # 多时间框架指标（如果提供）
+    if "multi_tf" in market_data:
+        market_lines.append("## Multi-Timeframe Analysis")
+        for tf, data in market_data["multi_tf"].items():
+            parts: list[str] = []
+            if "rsi_14" in data:
+                r = data["rsi_14"]
+                lb = "OVERSOLD" if r < 30 else ("OVERBOUGHT" if r > 70 else "NEUTRAL")
+                parts.append(f"RSI={r}[{lb}]")
+            if "sma_20" in data:
+                parts.append(f"SMA=${data['sma_20']:,.0f}[{data.get('price_vs_sma', '?')}]")
+            if "macd_signal" in data:
+                parts.append(f"MACD[{data['macd_signal']}]")
+            if parts:
+                market_lines.append(f"- {tf}: {' | '.join(parts)}")
     market_sec = "\n".join(market_lines)
     # 持仓
     if positions:

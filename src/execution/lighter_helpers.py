@@ -155,6 +155,44 @@ async def wait_for_fill(
         return None
 
 
+async def fetch_candle_closes(
+    api_client: ApiClient, market_index: int | None,
+    resolution: str = "5m", count_back: int = 35,
+) -> list[float]:
+    """从 Lighter CandlestickApi 获取历史 K 线收盘价。
+
+    Args:
+        resolution: K线周期，支持 1m/5m/15m/1h/4h/1d/1w
+        count_back: 拉取条数（MACD 需 26+9=35）
+    """
+    try:
+        candle_api = lighter.CandlestickApi(api_client)
+        now = int(time.time())
+        resp = await candle_api.candlesticks(
+            market_id=market_index, resolution=resolution,
+            start_timestamp=0, end_timestamp=now,
+            count_back=count_back,
+        )
+        candles = resp.candlesticks if hasattr(resp, "candlesticks") else []
+        return [float(c.close) for c in candles if c.close is not None]
+    except Exception as e:
+        logger.warning(f"获取K线失败 ({resolution}): {e}")
+        return []
+
+
+async def fetch_24h_volume(api_client: ApiClient, market_index: int | None) -> float:
+    """从 Lighter REST API 获取 24h 交易量（USD）。"""
+    try:
+        order_api = lighter.OrderApi(api_client)
+        details = await order_api.order_book_details(market_id=market_index)
+        d = details.order_book_details[0]
+        vol = getattr(d, "daily_quote_token_volume", None)
+        return float(vol) if vol else 0.0
+    except Exception as e:
+        logger.warning(f"获取24h交易量失败: {e}")
+        return 0.0
+
+
 async def fetch_last_price(api_client: ApiClient, market_index: int | None) -> Decimal:
     """通过 REST 获取最新成交价（平仓后备方案）。
 

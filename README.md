@@ -178,7 +178,7 @@ personality-trading-agents/
 │   ├── dashboard.py             # Rich terminal real-time dashboard
 │   ├── backtest.py              # Rule-based historical backtesting
 │   ├── llm_backtest.py          # Real LLM backtesting with consistency metrics + multi-market
-│   ├── live_lighter.py          # Lighter DEX single-agent live trading entry point
+│   ├── live_lighter.py          # Lighter DEX live trading (--timeframe 1m/5m/15m/1h/4h/1d)
 │   ├── generate_synthetic_data.py # Generate synthetic bear/sideways/bull CSV data
 │   ├── export_training_data.py  # Export decision traces as JSONL for LLM fine-tuning
 │   ├── create_agents_config.py  # Bulk config generation
@@ -571,6 +571,81 @@ logs/
 ├── llm_backtest/  # llm_backtest.py logs
 └── main/          # src/main.py logs
 ```
+
+---
+
+## P11: Technical Indicator Injection + Multi-Timeframe Analysis
+
+Root cause fix for **LLM all-HOLD problem**: agents only received `{price, change_24h~0%, volume=0}` — no technical indicators despite `indicators.py` existing since P6.1. System prompt demanded "Act on RSI/MACD/SMA signals" but none were provided.
+
+### Data Flow (Before → After)
+
+```
+Before: WS mid price → MarketSnapshot(price, volume=0) → LLM sees price only → HOLD
+After:  CandlestickApi → RSI/SMA/MACD per timeframe → LLM sees full technical picture → BUY/SELL/HOLD
+```
+
+### Multi-Timeframe Technical Indicators
+
+Fetches real K-line data from **Lighter CandlestickApi** (`/api/v1/candles`) — zero warmup, exchange-grade close prices:
+
+```bash
+# Default: 5-minute primary timeframe
+python scripts/live_lighter.py --agent 乐观冲浪型
+
+# 1-hour primary (medium-term strategy)
+python scripts/live_lighter.py --agent 审慎观察型 --timeframe 1h
+
+# 1-minute primary (short-term scalping)
+python scripts/live_lighter.py --agent 激进冒险型 --timeframe 1m
+
+# Daily primary (low-frequency swing trading)
+python scripts/live_lighter.py --agent 铁壁防守型 --timeframe 1d
+```
+
+| Timeframe | Refresh Interval | Best For |
+|-----------|-----------------|----------|
+| `1m` | 60s | Short-term scalping |
+| `5m` | 300s (default) | Active intraday |
+| `15m` | 900s | Swing trading |
+| `1h` | 3600s | Medium-term positions |
+| `4h` | 14400s | Longer swings |
+| `1d` | 86400s | Position trading |
+
+**All 6 timeframes computed simultaneously** — primary timeframe feeds standard RSI/SMA/MACD keys, all others appear in Multi-Timeframe Analysis section:
+
+```
+## Current Market Data
+- RSI(14): 48.31 [NEUTRAL]          ← primary timeframe (--timeframe)
+- SMA(20): $70,500.00 (price is above SMA)
+- MACD Histogram: 0.0023 [BULLISH]
+## Multi-Timeframe Analysis
+- 5m:  RSI=48.31[NEUTRAL] | SMA=$70,500[above] | MACD[BULLISH]
+- 15m: RSI=52.10[NEUTRAL] | SMA=$70,350[above] | MACD[BEARISH]
+- 1h:  RSI=45.80[NEUTRAL] | SMA=$70,200[above] | MACD[BULLISH]
+- 1d:  RSI=55.20[NEUTRAL] | SMA=$69,800[above] | MACD[BULLISH]
+```
+
+### Additional Fixes
+
+| Fix | File | Description |
+|-----|------|-------------|
+| 24h Volume from API | `lighter_helpers.py` | `fetch_24h_volume()` reads `daily_quote_token_volume` from REST API (was hardcoded 0) |
+| Unrealized PnL | `live_lighter.py` | Computed from `avg_entry_price × position_size` in real-time (was hardcoded 0.0) |
+| Position size `abs()` | `live_lighter.py` | Short positions no longer show negative size in prompt |
+| Per-sample vote logging | `trading_agent.py` | Each LLM sample logs `action/confidence/reasoning[:80]` individually |
+| Consecutive HOLD notify | `live_lighter.py` | Every 3 consecutive HOLDs → Telegram notification + counted as 1 trade (prevents memory starvation) |
+| HOLD trade counting | `live_lighter.py` | 3× HOLD = 1 trade count → triggers L3 reflection/L4 wisdom extraction normally |
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `lighter_helpers.py` | +`fetch_candle_closes()`, +`fetch_24h_volume()` |
+| `lighter_feed.py` | +`get_prices_list()` |
+| `live_lighter.py` | `--timeframe` arg, multi-TF preload/refresh, volume cache, PnL calc, HOLD counter |
+| `trading_agent.py` | Per-sample vote logging |
+| `prompt_generator.py` | Multi-Timeframe Analysis section |
 
 ---
 
@@ -1109,6 +1184,18 @@ Example signal notification:
 - [x] `logger.py` — Auto-classified logging: all scripts save to `logs/{type}/{type}_{ts}.log`
 - [x] `trading_agent.py` — Trade count persisted to Redis (`agent:{id}:trade_count`), survives restarts
 - [x] `trading_agent.py` — HOLD excluded from trade count (only BUY/SELL trigger L3/L4)
+
+### P11 (Complete): Technical Indicator Injection + Multi-Timeframe Analysis
+- [x] `lighter_helpers.py` — `fetch_candle_closes()` via Lighter CandlestickApi (zero warmup)
+- [x] `lighter_helpers.py` — `fetch_24h_volume()` from REST API `daily_quote_token_volume`
+- [x] `lighter_feed.py` — `get_prices_list()` exposes price history for indicator calculation
+- [x] `live_lighter.py` — `--timeframe` CLI arg (1m/5m/15m/1h/4h/1d) selects primary indicator timeframe
+- [x] `live_lighter.py` — Multi-timeframe preload on startup + per-period refresh in loop
+- [x] `live_lighter.py` — Unrealized PnL from `avg_entry_price` (was hardcoded 0.0)
+- [x] `live_lighter.py` — Position size uses `abs()` (short positions no longer negative in prompt)
+- [x] `live_lighter.py` — Consecutive HOLD counter: 3× HOLD = 1 trade + TG notification
+- [x] `prompt_generator.py` — Multi-Timeframe Analysis section in decision prompt
+- [x] `trading_agent.py` — Per-sample vote logging (action/confidence/reasoning per LLM call)
 
 ### Phase 2 (Future): Advanced Live Trading
 - [ ] Multi-agent live mode on Lighter DEX

@@ -102,6 +102,10 @@ class LighterLiveDataFeed(DataFeed):
     def is_ready(self) -> bool:
         return self._ob_ready and bool(self._bids) and bool(self._asks)
 
+    def get_prices_list(self) -> list[float]:
+        """返回价格历史列表（仅价格，供指标计算）。"""
+        return [p for _, p in self._price_history]
+
     # ── 价格历史 ──
 
     def _update_price_history(self, price: float) -> None:

@@ -2,7 +2,7 @@
 """Lighter DEX 实盘入口（自动读取链上杠杆）。"""
 from __future__ import annotations
 
-import argparse, asyncio, os, sys
+import argparse, asyncio, os, sys, time
 from contextlib import suppress
 from decimal import Decimal
 
@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.utils.logger import setup_logging  # noqa: E402 — 自动日志保存
 from src.execution.lighter_executor import LighterExecutor
+from src.execution.lighter_helpers import fetch_24h_volume, fetch_candle_closes
 from src.integration.redis_bus import RedisBus
 from src.integration.telegram_notifier import TelegramNotifier
 from src.market.lighter_feed import LighterLiveDataFeed
@@ -30,6 +31,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--interval", type=int, default=0, help="决策间隔秒数（0=用配置）")
     p.add_argument("--max-position", type=float, default=0.0, help="最大仓位 BTC")
     p.add_argument("--dry-run", action="store_true", help="只看信号不下单")
+    p.add_argument(
+        "--timeframe", default="5m",
+        choices=["1m", "5m", "15m", "1h", "4h", "1d"],
+        help="主时间框架（决定 RSI/SMA/MACD 的 K 线周期，默认 5m）",
+    )
     return p.parse_args()
 
 
@@ -60,8 +66,10 @@ async def decision_loop(
     capital: float, asset_config: dict,
     leverage: int = 1, mmr: float = 0.012,
     trade_logger: PersistentTradeLogger | None = None,
+    primary_tf: str = "5m",
 ) -> None:
     from src.agent.trading_agent import TradingAgent, _snapshot_to_dict
+    from src.market.indicators import calculate_macd, calculate_rsi, calculate_sma
     from src.personality.prompt_generator import generate_decision_prompt
 
     profile = get_profile(profile_name)
@@ -78,6 +86,29 @@ async def decision_loop(
     await agent._restore_trade_count()
     # 预热跳过：第一个 BUY/SELL 信号数据不足，跳过不执行
     warmup_skipped = False
+    # 成交量缓存（每 12 轮刷新一次 ~1h @300s）
+    volume_cache = 0.0
+    volume_refresh_counter = 0
+    _VOLUME_REFRESH_EVERY = 12
+    # 连续 HOLD 计数 + TG 通知
+    consecutive_holds = 0
+    _HOLD_NOTIFY_EVERY = 3
+    # 多时间框架指标：启动时从 K 线 API 预加载，消除预热等待
+    _ALL_TF = ["1m", "5m", "15m", "1h", "4h", "1d"]
+    _TF_REFRESH_SEC = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
+    # 确保主时间框架在列表中，且排第一
+    _TIMEFRAMES = [primary_tf] + [t for t in _ALL_TF if t != primary_tf]
+    _TF_CANDLE_COUNT = 35  # MACD 需要 26+9=35 条
+    logger.info(f"主时间框架: {primary_tf} | 全部: {_TIMEFRAMES}")
+    tf_prices: dict[str, list[float]] = {}
+    tf_last_refresh: dict[str, float] = {}
+    for tf in _TIMEFRAMES:
+        closes = await fetch_candle_closes(
+            executor._api_client, executor._market_index, tf, _TF_CANDLE_COUNT,
+        )
+        tf_prices[tf] = closes
+        tf_last_refresh[tf] = time.time()
+        logger.info(f"预加载 {tf} K线: {len(closes)} 条")
 
     while True:
         try:
@@ -89,11 +120,13 @@ async def decision_loop(
             real_pos = executor._local_position
             if real_pos != 0:
                 direction = "LONG" if real_pos > 0 else "SHORT"
+                entry = float(executor._avg_entry_price) if executor._avg_entry_price else snapshot.price
+                unrealized = (snapshot.price - entry) * float(real_pos)
                 agent._positions = [{
-                    "asset": asset, "size": float(real_pos),
+                    "asset": asset, "size": abs(float(real_pos)),
                     "direction": direction,
-                    "entry_price": float(executor._last_price or snapshot.price),
-                    "unrealized_pnl": 0.0,
+                    "entry_price": entry,
+                    "unrealized_pnl": round(unrealized, 2),
                 }]
             else:
                 agent._positions = []
@@ -102,8 +135,58 @@ async def decision_loop(
             margin = abs(real_pos) * Decimal(str(snapshot.price)) / Decimal(str(leverage))
             agent._portfolio_value = bal + margin
             ctx = await agent._memory.get_context_for_decision(asset, "")
+            market_dict = _snapshot_to_dict(snapshot)
+            # 刷新过期的时间框架 K 线数据
+            now_ts = time.time()
+            for tf in _TIMEFRAMES:
+                if now_ts - tf_last_refresh.get(tf, 0) >= _TF_REFRESH_SEC[tf]:
+                    closes = await fetch_candle_closes(
+                        executor._api_client, executor._market_index, tf, _TF_CANDLE_COUNT,
+                    )
+                    if closes:
+                        tf_prices[tf] = closes
+                    tf_last_refresh[tf] = now_ts
+            # 主时间框架注入标准 key（兼容 prompt_generator 现有逻辑）
+            primary = tf_prices.get(primary_tf, [])
+            rsi = calculate_rsi(primary, 14)
+            if rsi is not None:
+                market_dict["rsi_14"] = round(rsi, 2)
+            sma = calculate_sma(primary, 20)
+            if sma is not None:
+                market_dict["sma_20"] = round(sma, 2)
+                market_dict["price_vs_sma"] = "above" if snapshot.price > sma else "below"
+            macd_data = calculate_macd(primary)
+            if macd_data is not None:
+                market_dict["macd_histogram"] = macd_data["histogram"]
+                market_dict["macd_signal"] = "BULLISH" if macd_data["histogram"] > 0 else "BEARISH"
+            # 多时间框架指标（全部周期）
+            multi_tf: dict[str, dict] = {}
+            for tf in _TIMEFRAMES:
+                p = tf_prices.get(tf, [])
+                td: dict = {}
+                r = calculate_rsi(p, 14)
+                if r is not None:
+                    td["rsi_14"] = round(r, 2)
+                s = calculate_sma(p, 20)
+                if s is not None:
+                    td["sma_20"] = round(s, 2)
+                    td["price_vs_sma"] = "above" if snapshot.price > s else "below"
+                m = calculate_macd(p)
+                if m is not None:
+                    td["macd_histogram"] = m["histogram"]
+                    td["macd_signal"] = "BULLISH" if m["histogram"] > 0 else "BEARISH"
+                if td:
+                    multi_tf[tf] = td
+            if multi_tf:
+                market_dict["multi_tf"] = multi_tf
+            # 成交量缓存刷新
+            volume_refresh_counter += 1
+            if volume_refresh_counter >= _VOLUME_REFRESH_EVERY or volume_cache == 0.0:
+                volume_cache = await fetch_24h_volume(executor._api_client, executor._market_index)
+                volume_refresh_counter = 0
+            market_dict["volume"] = volume_cache
             prompt = generate_decision_prompt(
-                _snapshot_to_dict(snapshot), agent._positions,
+                market_dict, agent._positions,
                 ctx, float(agent._portfolio_value),
             )
             n = llm_config.get("decision_samples", 3)
@@ -114,7 +197,26 @@ async def decision_loop(
             else:
                 sig = await agent._multi_sample_decision(prompt, snapshot, n, thr)
             if sig is None:
-                logger.info(f"[{profile_name}] HOLD")
+                consecutive_holds += 1
+                logger.info(f"[{profile_name}] HOLD ({consecutive_holds}连续)")
+                if consecutive_holds % _HOLD_NOTIFY_EVERY == 0:
+                    # 每 3 次连续 HOLD 计为 1 笔交易（防止记忆系统饿死）
+                    agent._trade_count += 1
+                    await agent._persist_trade_count()
+                    logger.info(f"[{profile_name}] 3次HOLD计1笔，累计 {agent._trade_count} 笔")
+                    if agent._trade_count % 10 == 0:
+                        await agent._trigger_reflection()
+                    if agent._trade_count % 500 == 0:
+                        await agent._memory._long_term.extract_wisdom(profile, llm_config)
+                    if agent._trade_count % 1000 == 0:
+                        recent = await agent._memory.get_recent_trades(10)
+                        await agent._memory._long_term.prune_outdated(
+                            profile, llm_config, recent,
+                        )
+                    await telegram.send_message(
+                        f"🔄 {profile_name} 连续 {consecutive_holds} 次 HOLD\n"
+                        f"价格: ${snapshot.price:,.2f} | 变化: {snapshot.price_24h_change_pct:+.2f}%"
+                    )
                 await asyncio.sleep(interval)
                 continue
             # #14: 预热跳过只在空仓时生效；有持仓时不跳过（避免错过平仓信号）
@@ -132,6 +234,7 @@ async def decision_loop(
                 await asyncio.sleep(interval)
                 continue
             warmup_skipped = True  # 有持仓时直接标记为已预热
+            consecutive_holds = 0  # 有信号时重置连续 HOLD 计数
             mid = feed.get_mid_price() or Decimal(str(snapshot.price))
             ok = await executor.execute_signal(sig, mid)
             if ok:
@@ -217,7 +320,7 @@ async def main() -> None:
     trade_logger = PersistentTradeLogger(market_type="lighter")
     mode = "DRY-RUN" if args.dry_run else "LIVE"
     o, c, e, a, n = profile.openness, profile.conscientiousness, profile.extraversion, profile.agreeableness, profile.neuroticism
-    msg = f"🚀 Lighter [{mode}] {leverage}x | {args.agent} (O{o}/C{c}/E{e}/A{a}/N{n}) | {ticker} {interval}s"
+    msg = f"🚀 Lighter [{mode}] {leverage}x | {args.agent} (O{o}/C{c}/E{e}/A{a}/N{n}) | {ticker} {interval}s | TF={args.timeframe}"
     logger.info(msg)
     await telegram.send_message(msg)
 
@@ -225,6 +328,7 @@ async def main() -> None:
         feed, executor, redis_bus, telegram,
         llm_cfg, args.agent, interval, args.capital, asset_config,
         leverage=leverage, mmr=mmr, trade_logger=trade_logger,
+        primary_tf=args.timeframe,
     ))
 
     # 用 try/finally 保证 Ctrl+C 时一定执行平仓（兼容所有 Python 版本）

@@ -148,6 +148,11 @@ class TradingAgent(BaseAgent):
                 raw = self._anonymizer.deanonymize(raw)
             data = self._parse_llm_response(raw)
             if data is not None:
+                logger.info(
+                    f"[{self._name}] 采样 {i+1}/{n_samples}: "
+                    f"action={data.get('action','?')} conf={data.get('confidence','?')} "
+                    f"reason={str(data.get('reasoning',''))[:80]}"
+                )
                 parsed.append(data)
         winner = vote_on_actions(parsed, consensus_threshold=threshold)
         if winner is None:
