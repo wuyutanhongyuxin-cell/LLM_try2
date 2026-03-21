@@ -28,6 +28,7 @@ from src.market.databento_feed import DatabentoCMEFeed, create_cme_mock_feed
 from src.personality.ocean_model import PRESET_PROFILES, OceanProfile
 from src.personality.trait_to_constraint import ocean_to_constraints
 from src.utils.config_loader import load_agents_config, load_llm_config, load_trading_config
+from src.utils.logger import setup_logging
 
 
 def _get_market_type(trading_cfg: dict[str, Any]) -> str:
@@ -125,6 +126,7 @@ def _register_shutdown(shutdown_event: asyncio.Event) -> None:
 
 async def main() -> None:
     """主函数：初始化并启动所有组件。"""
+    setup_logging("main")  # 自动保存日志到 logs/main/
     # 1. 加载配置
     agents_cfg = load_agents_config()
     trading_cfg = load_trading_config()

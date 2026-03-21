@@ -42,5 +42,11 @@ def vote_on_actions(
         return None
     # 从胜出 action 的信号中选 confidence 最高的
     candidates = [s for s in parsed_signals if str(s.get("action", "")).upper() == winner]
-    best = max(candidates, key=lambda s: float(s.get("confidence", 0)))
+    def _safe_conf(s: dict) -> float:
+        try:
+            v = float(s.get("confidence", 0))
+            return v if v == v else 0.0  # nan 检查
+        except (ValueError, TypeError):
+            return 0.0
+    best = max(candidates, key=_safe_conf)
     return best

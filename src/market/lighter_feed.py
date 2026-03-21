@@ -40,7 +40,10 @@ class LighterLiveDataFeed(DataFeed):
     # ── 连接管理 ──
 
     async def connect(self) -> None:
-        """启动 WS 循环，等待 OB 就绪（最长 10 秒）。"""
+        """启动 WS 循环，等待 OB 就绪（最长 10 秒）。
+
+        #9: 超时时清理 WS task，防止后台泄露。
+        """
         self._running = True
         self._ws_task = asyncio.create_task(self._ws_loop())
         deadline = time.time() + 10
@@ -49,6 +52,8 @@ class LighterLiveDataFeed(DataFeed):
                 logger.info("Lighter 行情源就绪")
                 return
             await asyncio.sleep(0.1)
+        # 超时：清理 WS task 防止泄露
+        await self.disconnect()
         raise RuntimeError("Lighter orderbook 未在 10 秒内就绪")
 
     async def disconnect(self) -> None:
@@ -135,6 +140,10 @@ class LighterLiveDataFeed(DataFeed):
         delay = RECONNECT_BASE_DELAY
         while self._running:
             try:
+                # #8: 重连前重置 OB 状态，防止增量更新应用到旧数据
+                self._ob_ready = False
+                self._bids.clear()
+                self._asks.clear()
                 async with websockets.connect(WS_URL) as ws:
                     self._ws = ws
                     delay = RECONNECT_BASE_DELAY

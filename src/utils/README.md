@@ -5,7 +5,8 @@
 
 ## 文件清单
 - `config_loader.py` — YAML 配置文件加载器（~42行）
-- `logger.py` — loguru 日志配置（~28行）
+- `logger.py` — loguru 日志配置 + 自动分类保存到文件（~84行）
+- `persistent_trade_logger.py` — 磁盘持久化交易记录器 JSONL（~80行）
 - `anonymizer.py` — 资产匿名化防 look-ahead bias（~60行）
 - `trade_logger.py` — 全链路交易日志记录器（~58行）
 - `tfidf.py` — 纯 Python TF-IDF + Cosine Similarity（~90行）

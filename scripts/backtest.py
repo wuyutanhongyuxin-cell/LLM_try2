@@ -26,6 +26,7 @@ from src.market.indicators import calculate_rsi
 from src.personality.ocean_model import OceanProfile, PRESET_PROFILES
 from src.personality.trait_to_constraint import TradingConstraints, ocean_to_constraints
 from src.utils.config_loader import load_trading_config
+from src.utils.logger import setup_logging
 
 # 市场 → 资产配置
 _MARKET_CONFIGS: dict[str, dict[str, list[str]]] = {
@@ -192,6 +193,7 @@ def print_results(results: list[dict], market: str, asset: str) -> None:
 
 def main() -> None:
     """解析参数并执行回测。"""
+    setup_logging("backtest")  # 自动保存日志到 logs/backtest/
     parser = argparse.ArgumentParser(description="Agent 历史回测（支持多市场）")
     parser.add_argument("--market", choices=["crypto", "cme"], default="cme",
                         help="市场类型 (默认: cme)")

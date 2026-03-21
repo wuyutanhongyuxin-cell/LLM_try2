@@ -178,13 +178,12 @@ class TestValidateSignal:
         signal = agent._validate_signal("not json", snapshot)
         assert signal is None
 
-    def test_hold_action_valid(self, snapshot: MarketSnapshot) -> None:
-        """HOLD 是合法的 action。"""
+    def test_hold_action_returns_none(self, snapshot: MarketSnapshot) -> None:
+        """HOLD = 无动作，应返回 None（不构建 TradeSignal）。"""
         agent = _make_agent()
         raw = _valid_signal_json(action="HOLD")
         signal = agent._validate_signal(raw, snapshot)
-        assert signal is not None
-        assert signal.action == Action.HOLD
+        assert signal is None
 
 
 # ── 元反思触发逻辑 ──────────────────────────────────

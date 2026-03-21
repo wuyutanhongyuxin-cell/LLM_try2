@@ -93,14 +93,21 @@ async def wait_for_fill(
 
 
 async def fetch_last_price(api_client: ApiClient, market_index: int | None) -> Decimal:
-    """通过 REST 获取最新成交价（平仓后备方案）。"""
+    """通过 REST 获取最新成交价（平仓后备方案）。
+
+    #15: 不再用硬编码 85000 兜底，失败返回 0 让调用方决定是否中止。
+    """
     try:
         order_api = lighter.OrderApi(api_client)
         details = await order_api.order_book_details(market_id=market_index)
         d = details.order_book_details[0]
-        return Decimal(str(d.last_price)) if hasattr(d, "last_price") else Decimal("85000")
-    except Exception:
-        return Decimal("85000")
+        if hasattr(d, "last_price") and d.last_price:
+            return Decimal(str(d.last_price))
+        logger.warning("Lighter API 未返回 last_price")
+        return Decimal("0")
+    except Exception as e:
+        logger.error(f"获取最新价格失败: {e}")
+        return Decimal("0")
 
 
 async def query_position(

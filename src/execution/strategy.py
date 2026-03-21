@@ -22,6 +22,17 @@ def _clip(value: float, min_val: float, max_val: float) -> float:
     return max(min_val, min(value, max_val))
 
 
+def _safe_float(value: object, default: float = 0.0) -> float:
+    """安全转 float，nan/inf/异常均返回 default。"""
+    try:
+        v = float(value)  # type: ignore[arg-type]
+        if v != v or v == float("inf") or v == float("-inf"):  # nan/inf
+            return default
+        return v
+    except (ValueError, TypeError):
+        return default
+
+
 class ExecutionStrategy(ABC):
     """执行策略抽象基类。接收 LLM 原始信号，输出最终可执行信号。"""
 
@@ -66,6 +77,12 @@ class RuleBasedStrategy(ExecutionStrategy):
         # 杠杆>1 时计算安全 SL 上限: (1/leverage - MMR) × safety_factor
         if leverage > 1:
             liq_dist = (1.0 / leverage) - mmr
+            if liq_dist <= 0:
+                # 杠杆过高或 MMR 配置错误，用最小安全距离兜底
+                logger.error(
+                    f"[{agent_name}] liq_dist={liq_dist:.6f} <= 0 "
+                    f"(leverage={leverage}, mmr={mmr})，使用最小安全距离 0.1%")
+                liq_dist = 0.001  # 0.1% 最小兜底
             self._max_sl_pct = liq_dist * 0.6 * 100  # 60% 安全系数，转百分比
         else:
             self._max_sl_pct = 100.0  # 无杠杆不限制
@@ -82,21 +99,33 @@ class RuleBasedStrategy(ExecutionStrategy):
         if action_str not in ("BUY", "SELL", "HOLD"):
             logger.warning(f"[{self._agent_name}] 无效 action: {action_str}")
             return None
+        # Bug1 修复：HOLD = 无动作，直接返回 None，不走后续 clip 流程
+        if action_str == "HOLD":
+            return None
         asset: str = str(raw_data.get("asset", ""))
         if asset not in constraints.allowed_assets:
             logger.warning(f"[{self._agent_name}] 资产 {asset} 不在允许列表中")
             return None
-        size_pct = _clip(float(raw_data.get("size_pct", 0)), 0, constraints.max_position_pct)
-        confidence = _clip(float(raw_data.get("confidence", 0)), 0.0, 1.0)
+        size_pct = _clip(_safe_float(raw_data.get("size_pct")), 0, constraints.max_position_pct)
+        confidence = _clip(_safe_float(raw_data.get("confidence")), 0.0, 1.0)
         if confidence < constraints.min_confidence_threshold:
             logger.info(f"[{self._agent_name}] 信心不足 {confidence:.2f}，跳过")
             return None
-        stop_loss: float | None = raw_data.get("stop_loss_price")
+        # SL/TP 为 0 或非法值视为"未设置"（None）
+        stop_loss_raw = raw_data.get("stop_loss_price")
+        stop_loss: float | None = _safe_float(stop_loss_raw) if stop_loss_raw is not None else None
+        if stop_loss is not None and stop_loss == 0:
+            stop_loss = None
         if constraints.require_stop_loss and stop_loss is None:
             logger.warning(f"[{self._agent_name}] 缺少止损价格，约束要求必须设置")
             return None
-        entry = float(raw_data.get("entry_price", snapshot.price))
-        take_profit: float | None = raw_data.get("take_profit_price")
+        entry = _safe_float(raw_data.get("entry_price", snapshot.price))
+        if entry <= 0:
+            entry = float(snapshot.price)
+        tp_raw = raw_data.get("take_profit_price")
+        take_profit: float | None = _safe_float(tp_raw) if tp_raw is not None else None
+        if take_profit is not None and take_profit == 0:
+            take_profit = None
         # 杠杆感知 SL/TP clip：防止爆仓
         if self._leverage > 1 and entry > 0:
             stop_loss, take_profit = self._clip_sl_tp(
@@ -120,23 +149,56 @@ class RuleBasedStrategy(ExecutionStrategy):
     def _clip_sl_tp(
         self, action: str, entry: float, sl: float | None, tp: float | None,
     ) -> tuple[float | None, float | None]:
-        """杠杆感知 SL/TP clip：确保 SL 距离不超过爆仓安全阈值。"""
+        """杠杆感知 SL/TP clip：方向校验 + 距离限制。
+
+        Bug5 修复：先检查 SL/TP 方向是否正确（BUY 的 SL 必须在下方，
+        SELL 的 SL 必须在上方），方向错误则强制修正。
+        参考 Binance API 规则：方向错误直接拒单。
+        """
         max_dist = entry * self._max_sl_pct / 100.0
+        is_buy = action == "BUY"
+
         if sl is not None:
-            dist = abs(entry - sl)
-            if dist > max_dist:
+            sl = float(sl)
+            # Bug5：方向校验（BUY SL 必须 < entry，SELL SL 必须 > entry）
+            direction_wrong = (is_buy and sl >= entry) or (not is_buy and sl <= entry)
+            if direction_wrong:
                 old_sl = sl
-                # BUY: SL 在下方; SELL: SL 在上方
-                sl = entry - max_dist if action == "BUY" else entry + max_dist
+                sl = entry - max_dist if is_buy else entry + max_dist
                 logger.warning(
-                    f"[{self._agent_name}] SL 距离 {dist/entry*100:.1f}% 超限 "
-                    f"({self._max_sl_pct:.1f}%), clip {old_sl:.0f}→{sl:.0f}")
+                    f"[{self._agent_name}] SL 方向错误: "
+                    f"{'BUY' if is_buy else 'SELL'} SL={old_sl:.0f} vs "
+                    f"entry={entry:.0f}, 修正→{sl:.0f}")
+            else:
+                # 距离校验
+                dist = abs(entry - sl)
+                if dist > max_dist:
+                    old_sl = sl
+                    sl = entry - max_dist if is_buy else entry + max_dist
+                    logger.warning(
+                        f"[{self._agent_name}] SL 距离 {dist/entry*100:.1f}% 超限 "
+                        f"({self._max_sl_pct:.1f}%), clip {old_sl:.0f}→{sl:.0f}")
+
         if tp is not None:
-            # TP 限制为 SL 距离的 3 倍（最大 R:R 3:1）
-            max_tp_dist = max_dist * 3
-            tp_dist = abs(entry - tp)
-            if tp_dist > max_tp_dist:
+            tp = float(tp)
+            # TP 方向校验（BUY TP 必须 > entry，SELL TP 必须 < entry）
+            tp_dir_wrong = (is_buy and tp <= entry) or (not is_buy and tp >= entry)
+            if tp_dir_wrong:
+                max_tp_dist = max_dist * 3
                 old_tp = tp
-                tp = entry + max_tp_dist if action == "BUY" else entry - max_tp_dist
-                logger.info(f"[{self._agent_name}] TP clip {old_tp:.0f}→{tp:.0f}")
+                tp = entry + max_tp_dist if is_buy else entry - max_tp_dist
+                logger.warning(
+                    f"[{self._agent_name}] TP 方向错误: "
+                    f"{'BUY' if is_buy else 'SELL'} TP={old_tp:.0f} vs "
+                    f"entry={entry:.0f}, 修正→{tp:.0f}")
+            else:
+                # TP 限制为 SL 距离的 3 倍（最大 R:R 3:1）
+                max_tp_dist = max_dist * 3
+                tp_dist = abs(entry - tp)
+                if tp_dist > max_tp_dist:
+                    old_tp = tp
+                    tp = entry + max_tp_dist if is_buy else entry - max_tp_dist
+                    logger.info(
+                        f"[{self._agent_name}] TP clip {old_tp:.0f}→{tp:.0f}")
+
         return sl, tp

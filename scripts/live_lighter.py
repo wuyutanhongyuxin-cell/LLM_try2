@@ -11,6 +11,7 @@ from loguru import logger
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from src.utils.logger import setup_logging  # noqa: E402 — 自动日志保存
 from src.execution.lighter_executor import LighterExecutor
 from src.integration.redis_bus import RedisBus
 from src.integration.telegram_notifier import TelegramNotifier
@@ -95,7 +96,9 @@ async def decision_loop(
             else:
                 agent._positions = []
             bal = await executor.get_balance()
-            agent._portfolio_value = bal + abs(real_pos) * Decimal(str(snapshot.price))
+            # #6: 用 balance + margin（notional/leverage）而非 gross notional
+            margin = abs(real_pos) * Decimal(str(snapshot.price)) / Decimal(str(leverage))
+            agent._portfolio_value = bal + margin
             ctx = await agent._memory.get_context_for_decision(asset, "")
             prompt = generate_decision_prompt(
                 _snapshot_to_dict(snapshot), agent._positions,
@@ -112,8 +115,8 @@ async def decision_loop(
                 logger.info(f"[{profile_name}] HOLD")
                 await asyncio.sleep(interval)
                 continue
-            # 预热跳过：首个 BUY/SELL 信号冷启动数据不足，跳过不下单
-            if not warmup_skipped:
+            # #14: 预热跳过只在空仓时生效；有持仓时不跳过（避免错过平仓信号）
+            if not warmup_skipped and real_pos == 0:
                 warmup_skipped = True
                 logger.warning(
                     f"[{profile_name}] ⏭️ 预热跳过首信号: "
@@ -126,6 +129,7 @@ async def decision_loop(
                 )
                 await asyncio.sleep(interval)
                 continue
+            warmup_skipped = True  # 有持仓时直接标记为已预热
             mid = feed.get_mid_price() or Decimal(str(snapshot.price))
             ok = await executor.execute_signal(sig, mid)
             if ok:
@@ -165,6 +169,7 @@ async def decision_loop(
 async def main() -> None:
     args = parse_args()
     load_dotenv()
+    setup_logging("live")  # 自动保存日志到 logs/live/
     lighter_cfg = load_yaml("lighter.yaml").get("lighter", {})
     llm_cfg = load_llm_config().get("llm", {})
     ticker = args.ticker or lighter_cfg.get("ticker", "BTC")

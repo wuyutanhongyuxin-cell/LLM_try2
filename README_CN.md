@@ -4,8 +4,8 @@
 
 > 用心理学 Big Five (OCEAN) 人格模型驱动的多 Agent 加密货币纸上交易系统——每个 Agent 拥有独特性格，性格决定交易风格
 
-[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-258%20passed-brightgreen.svg)](#)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![Tests](https://img.shields.io/badge/tests-290%20passed-brightgreen.svg)](#)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
@@ -27,8 +27,8 @@
               ┌────────────────┼────────────────┐
               ▼                ▼                ▼
       ┌──────────────┐ ┌────────────┐ ┌──────────────┐
-      │ System Prompt│ │  硬约束     │ │ 三层记忆      │
-      │ （性格注入）  │ │ （代码强制）│ │ W / E / S    │
+      │ System Prompt│ │  硬约束     │ │ 四层记忆      │
+      │ （性格注入）  │ │ （代码强制）│ │ W / E / S / W│
       └──────┬───────┘ └─────┬──────┘ └──────┬───────┘
              │               │               │
              └───────┬───────┘               │
@@ -178,19 +178,20 @@ personality-trading-agents/
 │   └── market_knowledge.json    # 市场因果关系知识图谱
 ├── src/
 │   ├── personality/             # 人格引擎：OCEAN 模型 + 约束映射 + Prompt 生成（含版本hash）
-│   ├── agent/                   # Agent 核心：交易 Agent + 多采样投票 + 三层记忆 + 反思
+│   ├── agent/                   # Agent 核心：交易 Agent + 多采样投票 + 四层记忆 + 反思
 │   ├── market/                  # 行情数据：Mock/Live/CME Databento 数据源 + 技术指标 + 对抗性场景
 │   ├── execution/               # 执行层：信号 + 纸上交易 + 聚合 + 风控 + 成本 + 漂移 + 辩论 + 策略
 │   ├── integration/             # 外部集成：Redis 消息总线 + Telegram（信号+漂移+成本告警）
 │   ├── utils/                   # 工具：配置 + 日志 + 匿名化 + 全链路日志 + TF-IDF + 知识图谱
 │   └── main.py                  # 主入口
-├── tests/                       # 258 个测试，覆盖全部模块
+├── tests/                       # 290 个测试，覆盖全部模块
 ├── scripts/
 │   ├── dashboard.py             # Rich 终端实时仪表盘
 │   ├── backtest.py              # 规则回测
 │   ├── llm_backtest.py          # LLM 真实回测（多次运行 + 一致性 + 多市况）
 │   ├── generate_synthetic_data.py # 合成多市况数据（熊市/横盘/牛市）
 │   ├── export_training_data.py  # 决策轨迹导出（JSONL 微调格式）
+│   ├── live_lighter.py          # Lighter DEX 单 Agent 实盘入口
 │   ├── create_agents_config.py  # 批量生成 Agent 配置
 │   ├── generate_cme_data.py      # 生成合成 CME 期货 OHLCV 数据
 │   └── download_cme_data.py      # 通过 Databento API 下载真实 CME 数据
@@ -500,13 +501,66 @@ if action_str in ("BUY", "SELL") and confidence == 0.0:
 
 ---
 
-## 三层记忆系统（FinMem 启发）
+## P10：生产安全加固（Codex + Opus 4.6 双 AI 审计）
+
+由 **Codex (gpt-5.3-codex, xhigh)** 全面审计 + **Opus 4.6** 逐条交叉验证，14 项达成共识的生产修复：
+
+### 信号处理安全（`strategy.py`）
+
+| 修复项 | 严重程度 | 说明 |
+|--------|---------|------|
+| HOLD 提前返回 | 致命 | HOLD 信号直接返回 `None`，不再进入完整 clip 流水线产生误导性告警 |
+| `liq_dist <= 0` 防护 | 致命 | 高杠杆下 `1/leverage - MMR` 可能为负，现在最小兜底 0.1% |
+| `_safe_float()` | 高 | 所有 LLM 浮点值增加 nan/inf/畸形字符串防护 |
+| SL/TP 方向校验 | 高 | BUY 止损必须 < 入场价，SELL 止损必须 > 入场价 |
+
+### 实盘交易安全（`lighter_executor.py`、`lighter_helpers.py`）
+
+| 修复项 | 严重程度 | 说明 |
+|--------|---------|------|
+| `asyncio.Lock` | 致命 | 防止并发信号执行的竞态条件 |
+| `_safe_get_balance()` | 致命 | API 异常返回 None（跳过本轮），与持仓状态交叉验证 |
+| 平仓重试逻辑 | 高 | 3 次重试 + 5% 残余阈值（原来一次 + 50% 容忍） |
+| 可配置成交超时 | 中 | `self._fill_timeout` 替代硬编码 1.5s |
+| 无硬编码价格兜底 | 中 | `fetch_last_price` 失败返回 0（原硬编码 $85,000） |
+
+### WebSocket 可靠性（`lighter_feed.py`）
+
+| 修复项 | 严重程度 | 说明 |
+|--------|---------|------|
+| 重连 OB 重置 | 高 | 重新订阅前清空 bids/asks，防止增量更新应用到旧数据 |
+| 连接超时清理 | 中 | 超时前调 `disconnect()`，防止 WS task 泄漏 |
+
+### 决策管线（`multi_sample.py`、`live_lighter.py`）
+
+| 修复项 | 严重程度 | 说明 |
+|--------|---------|------|
+| 安全 confidence 解析 | 中 | 多采样投票中增加 nan 检查 |
+| 保证金组合价值 | 中 | 使用 `balance + abs(pos) × price / leverage` 而非总名义价值 |
+| 预热跳过仓位感知 | 中 | 仅空仓时跳过首信号；有仓位时保留平仓信号 |
+
+### 可观测性（`logger.py`）
+
+自动分类日志系统：所有脚本自动保存日志到 `logs/{type}/{type}_{timestamp}.log`，并生成 `{type}_latest.txt` 指针文件。
+
+```
+logs/
+├── live/          # live_lighter.py 日志
+├── backtest/      # backtest.py 日志
+├── llm_backtest/  # llm_backtest.py 日志
+└── main/          # src/main.py 日志
+```
+
+---
+
+## 四层记忆系统（FinMem 启发）
 
 | 层级 | 名称 | 内容 | 容量 | 存储 | 检索方式 |
 |------|------|------|------|------|---------|
 | L1 | 工作记忆 | 最近 20 条 tick + 最近 5 次交易结果 | 20+5 | 内存 | 全量（每次决策） |
 | L2 | 情节记忆 | 完整交易记录（价格、盈亏、reasoning） | 50 笔 | Redis | TF-IDF 混合检索 |
 | L3 | 语义记忆 | 反思总结（自然语言） | 20 条 | Redis | 指数衰减加权 |
+| L4 | 交易智慧 | 永久交易智慧（投票验证通过） | 无上限 | 本地文件 | 按需加载 |
 
 **记忆隔离**：每个 Agent 的记忆完全独立，互不共享，确保性格差异不被稀释。
 
@@ -585,7 +639,7 @@ pip install -e ".[dev]"
 
 # 验证安装
 pytest tests/ -v
-# 应看到 223 passed
+# 应看到 290 passed
 ```
 
 ### Step 5：配置环境变量
@@ -1127,7 +1181,7 @@ agents:
 
 | 组件 | 选型 | 说明 |
 |------|------|------|
-| 语言 | Python 3.9+ | asyncio 异步生态 |
+| 语言 | Python 3.11+ | asyncio 异步生态 |
 | LLM 接口 | `litellm` | 统一接口，支持 Claude/GPT/本地模型 |
 | 数据校验 | Pydantic v2 | 类型安全 + 序列化 |
 | 消息队列 | Redis pub/sub | Agent 信号广播 |
@@ -1135,7 +1189,7 @@ agents:
 | 日志 | loguru | 结构化彩色输出 |
 | 仪表盘 | rich | 终端实时 UI |
 | CME 数据 | `databento` | Databento API 获取 CME 期货 OHLCV |
-| 测试 | pytest + pytest-asyncio | 253 个测试，全模块覆盖 |
+| 测试 | pytest + pytest-asyncio | 290 个测试，全模块覆盖 |
 
 **刻意不用的依赖**：pandas、numpy、django、flask、sqlalchemy——保持轻量。
 
@@ -1299,8 +1353,37 @@ Action KL=0.312 > critical(0.2)
 - [ ] 阶段 3 深度回测：24 Agent × 200 步 × 4 品种（A+B 批 ~18h / C 批 ~15h）
 - [ ] 最终筛选：缩减到 6~8 个 Agent 进长跑验证
 
-### Phase 2（未来）：实盘交易
-- [ ] 接入真实 DEX（GRVT/Paradex）
+### P9（完成）：Lighter DEX 实盘交易
+- [x] Lighter WS 实时行情数据源（`lighter_feed.py`）— BBO → MarketSnapshot
+- [x] Lighter 实盘执行器（`lighter_executor.py`）— 通过 SDK 发送 IOC 市价单
+- [x] 单 Agent 实盘入口脚本（`live_lighter.py`）— dry-run + live 两种模式
+- [x] Lighter 配置（`config/lighter.yaml`）— ticker、仓位限制、成本
+- [x] 26 个单元测试覆盖 feed + executor
+- [x] 启动时自动读取链上杠杆（IMF → 杠杆换算）
+- [x] Ctrl+C 优雅退出 + 自动平仓
+- [ ] 多 Agent 实盘模式
+- [ ] WebSocket 成交确认集成
+- [ ] 实盘绩效仪表盘
+
+### P10（完成）：生产安全加固（Codex + Opus 4.6 审计）
+- [x] `strategy.py` — HOLD 信号提前返回，阻止进入完整 clip 流水线
+- [x] `strategy.py` — `liq_dist <= 0` 防护，高杠杆下最小兜底 0.1%
+- [x] `strategy.py` — `_safe_float()` 防护 nan/inf/畸形 LLM 输出
+- [x] `strategy.py` — SL/TP 方向校验（BUY 止损 < 入场价，SELL 止损 > 入场价）
+- [x] `lighter_executor.py` — `asyncio.Lock` 防止并发信号执行
+- [x] `lighter_executor.py` — `_safe_get_balance()` API 异常时返回 None + 持仓交叉验证
+- [x] `lighter_executor.py` — 平仓重试逻辑（3 次，5% 残余阈值）
+- [x] `lighter_executor.py` — 可配置 `fill_timeout` 替代硬编码等待
+- [x] `lighter_helpers.py` — `fetch_last_price` 失败返回 0（原硬编码 $85,000）
+- [x] `lighter_feed.py` — WS 重连时清空 orderbook 状态
+- [x] `lighter_feed.py` — 连接超时时清理 WS task 防泄漏
+- [x] `multi_sample.py` — 安全 confidence 解析 + nan 检查
+- [x] `live_lighter.py` — 组合价值用保证金而非总名义价值
+- [x] `live_lighter.py` — 预热跳过仅在空仓时生效（保留平仓信号）
+- [x] `logger.py` — 自动分类日志系统：所有脚本保存到 `logs/{type}/{type}_{ts}.log`
+
+### Phase 2（未来）：高级实盘功能
+- [ ] Lighter DEX 多 Agent 实盘模式
 - [ ] 人格动态进化（反思驱动自动调参）
 - [ ] 情绪数据源（Twitter/Telegram sentiment）
 - [ ] 投票模式实盘验证

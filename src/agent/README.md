@@ -9,6 +9,7 @@
 - `memory.py` — 四层记忆系统：Working / Episodic / Semantic / Wisdom（~194行）
 - `long_term_memory.py` — L4 永久记忆：归档+投票淘汰+智慧压缩（~171行）
 - `memory_pruner.py` — 记忆投票淘汰：10轮LLM投票+≥500笔交易门槛（~139行）
+- `multi_sample.py` — 多采样投票决策：多数票+安全 confidence 解析（~52行）
 - `reflection.py` — 交易反思模块，每 10 笔触发（~137行）
 
 ## 记忆架构

@@ -5,7 +5,7 @@
 
 ## 文件清单
 - `data_feed.py` — DataFeed 抽象 + MockDataFeed(含对抗注入) + LiveDataFeed（~215行）
-- `lighter_feed.py` — Lighter DEX WS 实时行情源，基于 orderbook BBO（~198行）
+- `lighter_feed.py` — Lighter DEX WS 实时行情源，基于 orderbook BBO + 重连 OB 重置（~207行）
 - `indicators.py` — RSI / SMA / MACD 技术指标（~78行）
 - `adversarial.py` — 对抗性行情场景生成器：5种极端场景（~90行）
 

@@ -21,7 +21,7 @@ from litellm import acompletion
 from loguru import logger
 from rich.console import Console
 
-import src.utils.logger as _  # noqa: F401  # 触发 loguru 自定义配置（LOG_LEVEL）
+from src.utils.logger import setup_logging
 
 from src.execution.cost_model import CMECostConfig, CostConfig
 from src.execution.paper_trader import PaperTrader
@@ -371,6 +371,7 @@ async def _run_multi_asset_comparison(
 async def main() -> None:
     """入口：解析参数、执行多轮回测、输出报告。"""
     args = _parse_args()
+    setup_logging("llm_backtest")  # 自动保存日志到 logs/llm_backtest/
     trading_cfg = load_trading_config()
     llm_cfg = load_llm_config()
     profiles = _select_profiles(args.agents)

@@ -4,8 +4,8 @@
 
 > A Multi-Agent Crypto Paper Trading System driven by Big Five (OCEAN) Personality Model
 
-[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-258%20passed-brightgreen.svg)](#)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![Tests](https://img.shields.io/badge/tests-290%20passed-brightgreen.svg)](#)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
@@ -25,8 +25,8 @@ Multiple agents run in parallel, each making independent decisions via LLM (thro
               ┌────────────────┼────────────────┐
               ▼                ▼                ▼
       ┌──────────────┐ ┌────────────┐ ┌──────────────┐
-      │ System Prompt│ │ Constraints│ │ Memory (3L)  │
-      │ (personality)│ │ (hard code)│ │ W / E / S    │
+      │ System Prompt│ │ Constraints│ │ Memory (4L)  │
+      │ (personality)│ │ (hard code)│ │ W / E / S / W│
       └──────┬───────┘ └─────┬──────┘ └──────┬───────┘
              │               │               │
              └───────┬───────┘               │
@@ -167,13 +167,13 @@ personality-trading-agents/
 │   └── market_knowledge.json    # Market causal relationship knowledge graph
 ├── src/
 │   ├── personality/             # OCEAN model, constraint mapping, prompt generation (w/ hash), prompt constants
-│   ├── agent/                   # Trading agent, multi-sample voting, 3-layer memory, reflection
+│   ├── agent/                   # Trading agent, multi-sample voting, 4-layer memory, reflection
 │   ├── market/                  # Data feeds (Mock/Live/CME Databento/Lighter DEX), indicators, adversarial
 │   ├── execution/               # Signal, paper trader, Lighter executor, aggregator, risk, cost, drift, debate
 │   ├── integration/             # Redis pub/sub, Telegram (signals + drift alerts + cost reports)
 │   ├── utils/                   # Config loader, logger, asset anonymizer, trade logger, TF-IDF, knowledge graph
 │   └── main.py                  # System entry point
-├── tests/                       # 258 tests covering all modules
+├── tests/                       # 290 tests covering all modules
 ├── scripts/
 │   ├── dashboard.py             # Rich terminal real-time dashboard
 │   ├── backtest.py              # Rule-based historical backtesting
@@ -516,13 +516,66 @@ After completion, further narrow down to **6~8 agents** for long-run validation.
 
 ---
 
-## Three-Layer Memory System (FinMem-inspired)
+## P10: Production Safety Hardening (Codex + Opus 4.6 Audit)
+
+Comprehensive code review by **Codex (gpt-5.3-codex, xhigh)** and **Opus 4.6**, resulting in 14 agreed-upon production fixes across 7 files:
+
+### Signal Processing Safety (`strategy.py`)
+
+| Fix | Severity | Description |
+|-----|----------|-------------|
+| HOLD early return | Critical | HOLD signals now return `None` immediately, preventing full clip pipeline execution and misleading warnings |
+| `liq_dist <= 0` guard | Critical | At high leverage (e.g., 84x), `1/leverage - MMR` goes negative. Now floors at 0.1% minimum |
+| `_safe_float()` | High | All LLM float values protected against nan/inf/malformed strings |
+| SL/TP direction validation | High | BUY stop-loss must be < entry price, SELL stop-loss must be > entry price |
+
+### Live Trading Safety (`lighter_executor.py`, `lighter_helpers.py`)
+
+| Fix | Severity | Description |
+|-----|----------|-------------|
+| `asyncio.Lock` | Critical | Prevents concurrent signal execution race conditions |
+| `_safe_get_balance()` | Critical | Returns None (skip round) on API failure, cross-validates with position state |
+| Close retry logic | High | 3 attempts with 5% residual threshold (was single-shot with 50% tolerance) |
+| Configurable fill timeout | Medium | `self._fill_timeout` replaces hardcoded 1.5s sleep |
+| No hardcoded price fallback | Medium | `fetch_last_price` returns 0 on failure (was hardcoded $85,000) |
+
+### WebSocket Reliability (`lighter_feed.py`)
+
+| Fix | Severity | Description |
+|-----|----------|-------------|
+| Reconnect OB reset | High | Clears bids/asks before re-subscribing, prevents stale data |
+| Connect timeout cleanup | Medium | Calls `disconnect()` before raising timeout error, prevents WS task leak |
+
+### Decision Pipeline (`multi_sample.py`, `live_lighter.py`)
+
+| Fix | Severity | Description |
+|-----|----------|-------------|
+| Safe confidence parsing | Medium | nan check in multi-sample voting prevents invalid sort |
+| Margin-based portfolio value | Medium | Uses `balance + abs(pos) × price / leverage` instead of gross notional |
+| Warmup skip position-aware | Medium | Only skips first signal when flat; with position, preserves close signals |
+
+### Observability (`logger.py`)
+
+Auto-classified logging system: every script automatically saves logs to `logs/{type}/{type}_{timestamp}.log` with `{type}_latest.txt` pointer file.
+
+```
+logs/
+├── live/          # live_lighter.py logs
+├── backtest/      # backtest.py logs
+├── llm_backtest/  # llm_backtest.py logs
+└── main/          # src/main.py logs
+```
+
+---
+
+## Four-Layer Memory System (FinMem-inspired)
 
 | Layer | Name | Content | Capacity | Storage | Retrieval |
 |-------|------|---------|----------|---------|-----------|
 | L1 | Working | Recent 20 ticks + last 5 trade results | 20+5 | In-memory | Full (every decision) |
 | L2 | Episodic | Full trade records (price, PnL, reasoning) | 50 trades | Redis | TF-IDF hybrid |
 | L3 | Semantic | Reflection summaries (natural language) | 20 entries | Redis | Decay-weighted |
+| L4 | Wisdom | Permanent trading wisdom (vote-validated) | Unlimited | Local file | On-demand |
 
 ---
 
@@ -568,7 +621,7 @@ cd personality-trading
 python3.11 -m venv venv
 source venv/bin/activate
 pip install -e ".[dev]"
-pytest tests/ -v  # should see 223 passed
+pytest tests/ -v  # should see 290 passed
 ```
 
 ### Step 5: Configure Environment
@@ -887,7 +940,7 @@ agents:
 
 | Component | Choice | Reason |
 |-----------|--------|--------|
-| Language | Python 3.9+ | Async ecosystem |
+| Language | Python 3.11+ | Async ecosystem |
 | LLM Interface | `litellm` | Provider-agnostic (Claude/GPT/local) |
 | Data Validation | Pydantic v2 | Type safety + serialization |
 | Message Bus | Redis pub/sub | Signal broadcasting |
@@ -895,7 +948,7 @@ agents:
 | Logging | loguru | Structured, colored output |
 | Dashboard | rich | Terminal UI |
 | CME Data | `databento` | Databento API for CME futures OHLCV |
-| Testing | pytest + pytest-asyncio | 258 tests, full coverage |
+| Testing | pytest + pytest-asyncio | 290 tests, full coverage |
 
 **Intentionally excluded**: pandas, numpy, django, flask, sqlalchemy (keeping it lightweight).
 
@@ -1016,22 +1069,41 @@ Example signal notification:
 - [ ] Phase 3 deep backtest: 24 agents × 200 steps × 4 assets (A+B batch ~18h / C batch ~15h)
 - [ ] Final selection: narrow to 6~8 agents for long-run validation
 
-### Phase 2 (Future): Live Trading
-- [ ] Connect to real DEX (GRVT/Paradex)
-- [ ] Dynamic personality evolution (auto-tuning from reflections)
-- [ ] Sentiment data sources (Twitter/Telegram)
-- [ ] Voting mode live validation
-- [ ] RL strategy replacing RuleBasedStrategy
-
-### P9 (In Progress): Lighter DEX Live Trading
+### P9 (Complete): Lighter DEX Live Trading
 - [x] Lighter WS real-time data feed (`lighter_feed.py`) — BBO → MarketSnapshot
 - [x] Lighter live executor (`lighter_executor.py`) — IOC market orders via SDK
 - [x] Single-agent live entry script (`live_lighter.py`) — dry-run + live modes
 - [x] Lighter config (`config/lighter.yaml`) — ticker, position limits, costs
 - [x] 26 unit tests for feed + executor
+- [x] Auto-read on-chain leverage (IMF → leverage conversion)
+- [x] Ctrl+C graceful shutdown with position close
 - [ ] Multi-agent live mode
 - [ ] WebSocket fill confirmation integration
 - [ ] Live performance dashboard
+
+### P10 (Complete): Production Safety Hardening (Codex + Opus 4.6 Audit)
+- [x] `strategy.py` — HOLD early return prevents full clip pipeline execution
+- [x] `strategy.py` — `liq_dist <= 0` guard with 0.1% minimum floor (high leverage safety)
+- [x] `strategy.py` — `_safe_float()` protects against nan/inf/malformed LLM values
+- [x] `strategy.py` — SL/TP direction validation (BUY SL < entry, SELL SL > entry)
+- [x] `lighter_executor.py` — `asyncio.Lock` prevents concurrent signal execution
+- [x] `lighter_executor.py` — `_safe_get_balance()` returns None on API failure with cross-validation
+- [x] `lighter_executor.py` — `close_all_positions` retry (3 attempts, 5% residual threshold)
+- [x] `lighter_executor.py` — Configurable `fill_timeout` replaces hardcoded sleep
+- [x] `lighter_helpers.py` — `fetch_last_price` returns 0 instead of hardcoded $85,000 fallback
+- [x] `lighter_feed.py` — WS reconnect resets orderbook state before re-subscribing
+- [x] `lighter_feed.py` — `connect()` timeout cleans up WS task to prevent leaks
+- [x] `multi_sample.py` — Safe confidence parsing with nan check
+- [x] `live_lighter.py` — Portfolio value uses margin (not gross notional)
+- [x] `live_lighter.py` — Warmup skip only when flat (preserves close signals with position)
+- [x] `logger.py` — Auto-classified logging: all scripts save to `logs/{type}/{type}_{ts}.log`
+
+### Phase 2 (Future): Advanced Live Trading
+- [ ] Multi-agent live mode on Lighter DEX
+- [ ] Dynamic personality evolution (auto-tuning from reflections)
+- [ ] Sentiment data sources (Twitter/Telegram)
+- [ ] Voting mode live validation
+- [ ] RL strategy replacing RuleBasedStrategy
 
 ---
 
