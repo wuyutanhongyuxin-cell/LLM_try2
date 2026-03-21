@@ -3,11 +3,14 @@ from __future__ import annotations
 """Lighter 辅助函数 — 下单、填单确认、账户查询。"""
 
 import asyncio
+import time
 from decimal import Decimal
 
 import lighter
 from lighter import ApiClient, SignerClient
 from loguru import logger
+
+_GTC_EXPIRY_SECONDS = 28 * 24 * 3600  # 28天
 
 TERMINAL_STATUSES = {
     "FILLED", "CANCELED", "CANCELLED", "REJECTED",
@@ -86,9 +89,7 @@ async def place_tp_limit_order(
     price_int = int(tp_price * price_mult)
     if price_int < 1:
         price_int = 1
-    # GTC: ORDER_TIME_IN_FORCE_GOOD_TILL_TIME，expiry=28天后
-    import time as _time
-    expiry = int(_time.time()) + 28 * 24 * 3600  # 28天后过期
+    expiry = int(time.time()) + _GTC_EXPIRY_SECONDS
 
     tx_type, tx_info, tx_hash_signed, error = signer.sign_create_order(
         market_index=market_index,
@@ -105,11 +106,7 @@ async def place_tp_limit_order(
     if error is not None:
         raise RuntimeError(f"Lighter TP 签名错误: {error}")
 
-    resp = await signer.send_tx(tx_type=int(tx_type), tx_info=tx_info)
-    logger.info(
-        f"Lighter TP 限价单已挂: {side} {size} @ ${tp_price:,.2f} "
-        f"idx={client_order_index}"
-    )
+    await signer.send_tx(tx_type=int(tx_type), tx_info=tx_info)
 
 
 async def cancel_all_orders(

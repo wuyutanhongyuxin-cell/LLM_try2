@@ -210,7 +210,8 @@ async def main() -> None:
     # 链上杠杆优先，配置兜底
     if executor._detected_leverage > 0:
         leverage = executor._detected_leverage
-        executor._leverage = leverage  # 同步更新 TP 计算用的杠杆
+        executor._leverage = leverage
+        executor._tp_offset = Decimal(str(tp_profit_pct)) / Decimal(str(leverage))
     logger.info(f"杠杆: {leverage}x {'(链上)' if executor._detected_leverage > 0 else '(配置)'}")
 
     trade_logger = PersistentTradeLogger(market_type="lighter")

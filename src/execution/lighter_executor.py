@@ -44,8 +44,9 @@ class LighterExecutor:
         self._avg_entry_price = Decimal("0")  # 综合持仓均价（加权平均）
         self._trade_count = self._consecutive_losses = 0
         # TP 止盈挂单配置
-        self._tp_enabled, self._tp_profit_pct = tp_enabled, tp_profit_pct
+        self._tp_enabled = tp_enabled
         self._leverage = leverage
+        self._tp_offset = Decimal(str(tp_profit_pct)) / Decimal(str(leverage))
         # #7: 防止并发执行信号
         self._exec_lock = asyncio.Lock()
 
@@ -147,7 +148,7 @@ class LighterExecutor:
         if not self._signer or self._market_index is None:
             return False
         pos_before = await self.get_position()
-        idx = int(time.time() * 1_000_000) % 1_000_000_000
+        idx = self._gen_order_idx()
         try:
             await place_ioc_order(
                 self._signer, self._market_index,
@@ -217,7 +218,7 @@ class LighterExecutor:
         await self._safe_cancel_all_orders()
         try:
             tp_side = "sell" if position > 0 else "buy"
-            idx = int(time.time() * 1_000_000) % 1_000_000_000
+            idx = self._gen_order_idx()
             await place_tp_limit_order(
                 self._signer, self._market_index, idx,
                 tp_side, abs(position), self._base_mult,
@@ -231,12 +232,16 @@ class LighterExecutor:
             logger.warning(f"TP 挂单失败（不影响主流程）: {e}")
 
     def _calc_tp_price(self, position: Decimal) -> Decimal:
-        """用综合均价计算 TP：avg_entry × (1 ± profit_pct / leverage)。"""
-        offset = Decimal(str(self._tp_profit_pct)) / Decimal(str(self._leverage))
+        """用综合均价计算 TP：avg_entry × (1 ± tp_offset)。"""
         if position > 0:  # LONG
-            return self._avg_entry_price * (Decimal("1") + offset)
+            return self._avg_entry_price * (Decimal("1") + self._tp_offset)
         else:  # SHORT
-            return self._avg_entry_price * (Decimal("1") - offset)
+            return self._avg_entry_price * (Decimal("1") - self._tp_offset)
+
+    @staticmethod
+    def _gen_order_idx() -> int:
+        """生成唯一的 client_order_index（微秒时间戳取模）。"""
+        return int(time.time() * 1_000_000) % 1_000_000_000
 
     async def _safe_cancel_all_orders(self) -> None:
         """安全取消全部挂单，失败只记日志。"""
@@ -275,18 +280,18 @@ class LighterExecutor:
 
     async def _close_all_locked(self) -> bool:
         """#2: 平仓逻辑 — 严格验证 + 重试。"""
-        # 平仓前取消所有挂单（TP 等），避免干扰
-        await self._safe_cancel_all_orders()
         pos = await self.get_position()
         if abs(pos) == 0:
             return True
+        # 有仓位才取消挂单（TP 等），避免空仓时浪费链上 tx
+        await self._safe_cancel_all_orders()
         if self._dry_run:
             logger.info(f"[DRY-RUN] 平仓: {pos}")
             return True
 
         for attempt in range(1, _CLOSE_MAX_RETRIES + 1):
             side = "sell" if pos > 0 else "buy"
-            idx = int(time.time() * 1_000_000) % 1_000_000_000
+            idx = self._gen_order_idx()
             try:
                 # #15: 不用硬编码 85000 兜底，优先用已知价格
                 close_price = self._last_price if self._last_price > 0 else \
