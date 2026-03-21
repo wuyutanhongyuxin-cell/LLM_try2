@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-"""LLM 回测辅助函数：信号校验、一致性计算、结果展示。"""
+"""LLM 回测辅助函数：信号校验、一致性计算、结果展示、结果保存。"""
 
 import json
 import math
 from collections import Counter
 from datetime import datetime, timezone
+from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
@@ -208,3 +209,71 @@ def print_results(all_runs: list[dict[str, dict]], consistency: dict) -> None:
             f"{data['pass_k']:.3f}",
         )
     console.print(ct)
+
+
+# ── 结果自动保存 ──
+
+_RESULTS_DIR = Path(__file__).resolve().parent.parent / "data" / "backtest_results"
+
+
+def save_backtest_results(
+    all_runs: list[dict[str, dict]],
+    consistency: dict[str, dict],
+    params: dict,
+) -> Path:
+    """将回测结果保存为 JSON 文件，返回文件路径。
+
+    Args:
+        all_runs: 每轮回测的完整结果
+        consistency: 多轮一致性报告
+        params: 运行参数（market, asset, runs, max_steps 等）
+    """
+    _RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
+    # 文件名包含关键参数，方便查找
+    agent_label = params.get("agent_name", "all")
+    asset_label = params.get("asset", params.get("assets", "unknown"))
+    if isinstance(asset_label, list):
+        asset_label = "_".join(asset_label)
+    filename = f"bt_{agent_label}_{asset_label}_{ts}.json"
+    # 构建可序列化的结果（去除 actions 列表中过长的原始数据，改为统计）
+    runs_summary: list[dict] = []
+    for i, run in enumerate(all_runs):
+        run_data: dict[str, dict] = {}
+        for aid, data in run.items():
+            action_counts = dict(Counter(
+                a for a in data.get("actions", []) if a != "SKIP"))
+            run_data[aid] = {
+                "name": data["name"],
+                "pnl": round(data["pnl"], 2),
+                "sharpe": round(data["sharpe"], 4),
+                "trades": data["trades"],
+                "open_positions": data.get("open_pos", 0),
+                "action_counts": action_counts,
+                "cost_cap_reached": data.get("cost_cap_reached", False),
+                "estimated_llm_cost": data.get("estimated_llm_cost", 0),
+            }
+        runs_summary.append(run_data)
+    # 一致性报告序列化
+    consistency_out: dict[str, dict] = {}
+    for aid, data in consistency.items():
+        consistency_out[aid] = {
+            "name": data["name"],
+            "mean_pnl": round(data["mean_pnl"], 2),
+            "pnl_std": round(data["pnl_std"], 2),
+            "agreement_rate": round(data["agreement_rate"], 4),
+            "pass_k": round(data["pass_k"], 4),
+            "k": data["k"],
+            "sharpes": [round(s, 4) for s in data["sharpes"]],
+        }
+    output = {
+        "timestamp": ts,
+        "params": params,
+        "runs": runs_summary,
+        "consistency": consistency_out,
+    }
+    filepath = _RESULTS_DIR / filename
+    filepath.write_text(json.dumps(output, ensure_ascii=False, indent=2), encoding="utf-8")
+    console.print(f"[green]结果已保存: {filepath}[/green]")
+    logger.info(f"回测结果已保存: {filepath}")
+    return filepath

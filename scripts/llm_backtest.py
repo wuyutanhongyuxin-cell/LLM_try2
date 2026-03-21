@@ -35,7 +35,8 @@ from src.utils.anonymizer import AssetAnonymizer
 from src.utils.config_loader import load_llm_config, load_trading_config
 
 from _backtest_helpers import (  # 同目录辅助模块
-    calc_consistency, parse_llm_json, print_results, validate_signal)
+    calc_consistency, parse_llm_json, print_results,
+    save_backtest_results, validate_signal)
 
 console = Console()
 
@@ -344,6 +345,12 @@ async def _run_multi_market(
         consistency = calc_consistency(all_runs)
         print_results(all_runs, consistency)
         market_results[market_name] = consistency
+        save_backtest_results(all_runs, consistency, {
+            "market": market_name, "runs": args.runs,
+            "max_steps": args.max_steps,
+            "agent_name": args.agent_name or "all",
+            "mode": "multi_market",
+        })
     # 跨市况对比
     print_cross_market_results(market_results)
 
@@ -371,6 +378,13 @@ async def _run_multi_asset_comparison(
         consistency = calc_consistency(all_runs)
         print_results(all_runs, consistency)
         asset_results[asset] = consistency
+        # 每个品种单独保存一份结果
+        save_backtest_results(all_runs, consistency, {
+            "market": args.market, "asset": asset, "runs": args.runs,
+            "max_steps": args.max_steps,
+            "agent_name": args.agent_name or "all",
+            "assets": args.assets, "mode": "multi_asset",
+        })
     if len(asset_results) > 1:
         console.print("\n[bold cyan]===== 跨品种对比 =====[/bold cyan]")
         print_cross_market_results(asset_results)
@@ -408,6 +422,11 @@ async def main() -> None:
     consistency = calc_consistency(all_runs)
     console.print()
     print_results(all_runs, consistency)
+    save_backtest_results(all_runs, consistency, {
+        "market": market, "asset": asset, "runs": args.runs,
+        "max_steps": args.max_steps, "agent_name": args.agent_name or "all",
+        "anonymize": args.anonymize,
+    })
 
 
 if __name__ == "__main__":
