@@ -155,26 +155,32 @@ async def wait_for_fill(
         return None
 
 
+_LIGHTER_BASE = "https://mainnet.zklighter.elliot.ai"
+
+
 async def fetch_candle_closes(
     api_client: ApiClient, market_index: int | None,
     resolution: str = "5m", count_back: int = 35,
 ) -> list[float]:
-    """从 Lighter CandlestickApi 获取历史 K 线收盘价。
+    """从 Lighter REST API 直接获取历史 K 线收盘价（不依赖 SDK 版本）。
 
     Args:
         resolution: K线周期，支持 1m/5m/15m/1h/4h/1d/1w
         count_back: 拉取条数（MACD 需 26+9=35）
     """
+    import aiohttp
+    url = f"{_LIGHTER_BASE}/api/v1/candles"
+    params = {
+        "market_id": market_index, "resolution": resolution,
+        "start_timestamp": 0, "end_timestamp": int(time.time()),
+        "count_back": count_back,
+    }
     try:
-        candle_api = lighter.CandlestickApi(api_client)
-        now = int(time.time())
-        resp = await candle_api.candlesticks(
-            market_id=market_index, resolution=resolution,
-            start_timestamp=0, end_timestamp=now,
-            count_back=count_back,
-        )
-        candles = resp.candlesticks if hasattr(resp, "candlesticks") else []
-        return [float(c.close) for c in candles if c.close is not None]
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                data = await resp.json()
+        candles = data.get("c", [])
+        return [float(c["c"]) for c in candles if c.get("c") is not None]
     except Exception as e:
         logger.warning(f"获取K线失败 ({resolution}): {e}")
         return []

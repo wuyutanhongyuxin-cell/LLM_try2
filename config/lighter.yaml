@@ -10,7 +10,7 @@ lighter:
   max_consecutive_losses: 5        # 连续亏损暂停阈值
   maintenance_margin_rate: 0.012   # Lighter BTC MMR=1.2%（Binance 0.4% 不适用）
   tp:
-    enabled: true              # 止盈挂单开关
+    enabled: false             # 止盈挂单开关（关闭，让 agent 自主判断出场）
     profit_pct: 0.18           # 获利百分比（18%）
     # sl_pct: 0.0              # 止损预留接口（暂不启用）
   costs:
