@@ -10,7 +10,8 @@ import lighter
 from lighter import ApiClient, SignerClient
 from loguru import logger
 
-_GTC_EXPIRY_SECONDS = 28 * 24 * 3600  # 28天
+# SDK 约定：order_expiry=-1 表示 28 天到期，0 表示 IOC 立即到期
+_GTC_28_DAY_EXPIRY = -1
 
 TERMINAL_STATUSES = {
     "FILLED", "CANCELED", "CANCELLED", "REJECTED",
@@ -89,8 +90,6 @@ async def place_tp_limit_order(
     price_int = int(tp_price * price_mult)
     if price_int < 1:
         price_int = 1
-    expiry = int(time.time()) + _GTC_EXPIRY_SECONDS
-
     tx_type, tx_info, tx_hash_signed, error = signer.sign_create_order(
         market_index=market_index,
         client_order_index=client_order_index,
@@ -101,7 +100,7 @@ async def place_tp_limit_order(
         time_in_force=signer.ORDER_TIME_IN_FORCE_GOOD_TILL_TIME,
         reduce_only=True,
         trigger_price=0,
-        order_expiry=expiry,
+        order_expiry=_GTC_28_DAY_EXPIRY,  # SDK: -1 = 28天到期
     )
     if error is not None:
         raise RuntimeError(f"Lighter TP 签名错误: {error}")
@@ -112,15 +111,23 @@ async def place_tp_limit_order(
 async def cancel_all_orders(
     signer: SignerClient, market_index: int,
 ) -> None:
-    """取消指定市场所有挂单（平仓或反向开仓前清理旧TP单）。"""
+    """取消所有挂单（平仓或反向开仓前清理旧TP单）。
+
+    SDK 签名: sign_cancel_all_orders(time_in_force, timestamp_ms)
+    time_in_force=1 (GTC) + timestamp_ms=0 → 取消所有 GTC 挂单。
+    注意：该方法不按 market 过滤，会取消账户下所有挂单。
+    """
+    # time_in_force=1 (GTC), timestamp_ms=0 → 取消全部 GTC 挂单
+    timestamp_ms = int(time.time() * 1000)
     tx_type, tx_info, tx_hash_signed, error = signer.sign_cancel_all_orders(
-        market_index=market_index,
+        time_in_force=signer.ORDER_TIME_IN_FORCE_GOOD_TILL_TIME,
+        timestamp_ms=timestamp_ms,
     )
     if error is not None:
         raise RuntimeError(f"Lighter 取消全部订单签名错误: {error}")
 
     resp = await signer.send_tx(tx_type=int(tx_type), tx_info=tx_info)
-    logger.info(f"Lighter 已取消市场 {market_index} 全部挂单")
+    logger.info("Lighter 已取消全部 GTC 挂单")
 
 
 async def wait_for_fill(
