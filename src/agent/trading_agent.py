@@ -61,7 +61,8 @@ class TradingAgent(BaseAgent):
         self._prompt_hash: str = get_prompt_hash(self._system_prompt)
         self._positions: list[dict] = []
         self._portfolio_value: Decimal = Decimal("10000")
-        self._trade_count: int = 0
+        self._trade_count: int = 0  # 启动后由 _restore_trade_count() 从 Redis 恢复
+        self._trade_count_key: str = f"agent:{agent_id}:trade_count"
         self._anonymizer: AssetAnonymizer | None = None
         self._strategy: RuleBasedStrategy = RuleBasedStrategy(
             agent_id=agent_id, agent_name=profile.name,
@@ -73,8 +74,20 @@ class TradingAgent(BaseAgent):
 
     # ── 主循环 ──────────────────────────────────────────
 
+    async def _restore_trade_count(self) -> None:
+        """从 Redis 恢复交易计数，使 L3/L4 触发阈值跨重启延续。"""
+        saved = await self._redis_bus.get_json(self._trade_count_key)
+        if saved is not None and isinstance(saved, int):
+            self._trade_count = saved
+            logger.info(f"[{self._name}] 恢复交易计数: {self._trade_count}")
+
+    async def _persist_trade_count(self) -> None:
+        """将交易计数写入 Redis 持久化。"""
+        await self._redis_bus.set_json(self._trade_count_key, self._trade_count)
+
     async def _run_loop(self) -> None:
         """按 rebalance 间隔循环执行决策。"""
+        await self._restore_trade_count()
         interval: int = self._constraints.rebalance_interval_seconds
         logger.info(f"[{self._name}] 决策间隔: {interval}秒")
         while self._running:
@@ -214,10 +227,13 @@ class TradingAgent(BaseAgent):
         await self._memory.save_trade_to_l2(trade_data)
         # 更新 L1 tick（记录行情快照）
         self._memory.add_tick({"price": signal.entry_price, "asset": signal.asset})
-        self._trade_count += 1
-        # 每 10 笔交易触发反思（更新 L3 语义记忆）
-        if self._trade_count % 10 == 0:
-            await self._trigger_reflection()
+        # 只有真实下单（BUY/SELL）才计入交易笔数，HOLD 不计入
+        if signal.action in (Action.BUY, Action.SELL):
+            self._trade_count += 1
+            await self._persist_trade_count()
+            # 每 10 笔交易触发反思（更新 L3 语义记忆）
+            if self._trade_count % 10 == 0:
+                await self._trigger_reflection()
 
     # ── 反思（每 10 笔交易触发） ──────────────────────
 

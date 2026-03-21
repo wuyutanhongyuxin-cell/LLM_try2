@@ -553,6 +553,8 @@ Comprehensive code review by **Codex (gpt-5.3-codex, xhigh)** and **Opus 4.6**, 
 | Safe confidence parsing | Medium | nan check in multi-sample voting prevents invalid sort |
 | Margin-based portfolio value | Medium | Uses `balance + abs(pos) × price / leverage` instead of gross notional |
 | Warmup skip position-aware | Medium | Only skips first signal when flat; with position, preserves close signals |
+| Trade count Redis persistence | High | `_trade_count` persisted to `agent:{id}:trade_count` in Redis; survives restarts so L3/L4 thresholds continue correctly |
+| HOLD excluded from count | Medium | Only BUY/SELL increment trade count; HOLD no longer inflates L3 reflection / L4 wisdom triggers |
 
 ### Observability (`logger.py`)
 
@@ -1097,6 +1099,8 @@ Example signal notification:
 - [x] `live_lighter.py` — Portfolio value uses margin (not gross notional)
 - [x] `live_lighter.py` — Warmup skip only when flat (preserves close signals with position)
 - [x] `logger.py` — Auto-classified logging: all scripts save to `logs/{type}/{type}_{ts}.log`
+- [x] `trading_agent.py` — Trade count persisted to Redis (`agent:{id}:trade_count`), survives restarts
+- [x] `trading_agent.py` — HOLD excluded from trade count (only BUY/SELL trigger L3/L4)
 
 ### Phase 2 (Future): Advanced Live Trading
 - [ ] Multi-agent live mode on Lighter DEX

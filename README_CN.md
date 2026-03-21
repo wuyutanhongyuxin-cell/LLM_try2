@@ -538,6 +538,8 @@ if action_str in ("BUY", "SELL") and confidence == 0.0:
 | 安全 confidence 解析 | 中 | 多采样投票中增加 nan 检查 |
 | 保证金组合价值 | 中 | 使用 `balance + abs(pos) × price / leverage` 而非总名义价值 |
 | 预热跳过仓位感知 | 中 | 仅空仓时跳过首信号；有仓位时保留平仓信号 |
+| 交易计数 Redis 持久化 | 高 | `_trade_count` 持久化到 Redis `agent:{id}:trade_count`，重启后恢复，L3/L4 阈值跨重启延续 |
+| HOLD 不计入交易笔数 | 中 | 仅 BUY/SELL 递增计数器，HOLD 不再膨胀 L3 反思 / L4 智慧提取触发频率 |
 
 ### 可观测性（`logger.py`）
 
@@ -1381,6 +1383,8 @@ Action KL=0.312 > critical(0.2)
 - [x] `live_lighter.py` — 组合价值用保证金而非总名义价值
 - [x] `live_lighter.py` — 预热跳过仅在空仓时生效（保留平仓信号）
 - [x] `logger.py` — 自动分类日志系统：所有脚本保存到 `logs/{type}/{type}_{ts}.log`
+- [x] `trading_agent.py` — 交易计数 Redis 持久化（`agent:{id}:trade_count`），重启后恢复
+- [x] `trading_agent.py` — HOLD 不计入交易笔数（仅 BUY/SELL 触发 L3/L4）
 
 ### Phase 2（未来）：高级实盘功能
 - [ ] Lighter DEX 多 Agent 实盘模式

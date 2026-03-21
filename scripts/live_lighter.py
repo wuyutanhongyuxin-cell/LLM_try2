@@ -74,6 +74,8 @@ async def decision_loop(
     )
     agent._portfolio_value = Decimal(str(capital))
     asset = constraints.allowed_assets[0]
+    # 从 Redis 恢复交易计数（跨重启延续 L3/L4 触发阈值）
+    await agent._restore_trade_count()
     # 预热跳过：第一个 BUY/SELL 信号数据不足，跳过不执行
     warmup_skipped = False
 
@@ -147,6 +149,7 @@ async def decision_loop(
                     )
                     trade_logger.log_trade(rec)
                 agent._trade_count += 1
+                await agent._persist_trade_count()
                 # 每 10 笔触发 L3 反思（自动归档到 L4）
                 if agent._trade_count % 10 == 0:
                     await agent._trigger_reflection()
