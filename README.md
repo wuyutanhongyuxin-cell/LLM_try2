@@ -863,7 +863,21 @@ python scripts/llm_backtest.py \
   --runs 2 --agents 3 --anonymize --max-steps 100
 ```
 
-### 3. Multi-Asset Comparison
+### 3. Single-Agent Backtest (New: `--agent-name`)
+
+```bash
+# 单独回测"乐观冲浪型"对 4 个 CME 品种
+python scripts/llm_backtest.py \
+  --market cme --assets ES CL GC ZB \
+  --agent-name 乐观冲浪型 --runs 1 --max-steps 500
+
+# 单品种单 Agent
+python scripts/llm_backtest.py \
+  --market cme --asset ES --csv data/cme/market/es_1h_real.csv \
+  --agent-name 乐观冲浪型 --runs 1 --max-steps 100
+```
+
+### 4. Multi-Asset Comparison
 
 ```bash
 # Classic 4-asset
@@ -887,7 +901,7 @@ python scripts/llm_backtest.py \
   --csv-dir data --runs 2 --agents 3 --anonymize --max-steps 80
 ```
 
-### 4. Multi-Market Stress Test
+### 5. Multi-Market Stress Test
 
 ```bash
 python scripts/generate_synthetic_data.py --csv data/btc_1h_2024.csv --output data/
@@ -898,15 +912,16 @@ python scripts/llm_backtest.py --csv data/btc_bull.csv --runs 3 --multi-market -
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `--csv` | string | **required** | Historical data CSV path |
+| `--csv` | string | `""` | Historical data CSV path (required for single-asset mode) |
 | `--runs` | int | 3 | Number of repeated runs (for consistency metrics) |
 | `--agents` | int | 32 | Number of preset personality archetypes to use (32 total) |
+| `--agent-name` | string | `""` | Single agent by name (e.g., `乐观冲浪型`). Overrides `--agents` |
 | `--anonymize` | flag | off | Enable asset anonymization (BTC-PERP → ASSET_A) |
 | `--max-steps` | int | 500 | Max backtest steps (1 step = 1 candle) |
 | `--market` | choice | crypto | Market type: `crypto` or `cme` |
 | `--asset` | string | auto | Single-asset code (e.g., `ES`, `BTC-PERP`) |
 | `--assets` | list | none | Multi-asset mode, space-separated (e.g., `ES CL GC ZB`) |
-| `--csv-dir` | string | data | CSV directory for multi-asset mode |
+| `--csv-dir` | string | data/cme/market | CSV directory for multi-asset mode |
 | `--multi-market` | flag | off | Cross-market-regime comparison |
 
 ### Cost Estimates
@@ -1196,6 +1211,16 @@ Example signal notification:
 - [x] `live_lighter.py` — Consecutive HOLD counter: 3× HOLD = 1 trade + TG notification
 - [x] `prompt_generator.py` — Multi-Timeframe Analysis section in decision prompt
 - [x] `trading_agent.py` — Per-sample vote logging (action/confidence/reasoning per LLM call)
+
+### P12 (Complete): Single-Agent Backtest Support (`--agent-name`)
+
+Allows backtesting a single specific agent personality instead of running all 32. Useful for validating the live-deployed agent against historical data while live trading continues in parallel.
+
+- [x] `llm_backtest.py` — `--agent-name` parameter to backtest a single personality (e.g., `乐观冲浪型`)
+- [x] `llm_backtest.py` — `_select_profiles()` supports name-based lookup with validation
+- [x] `llm_backtest.py` — `--csv` no longer required in multi-asset mode (`--assets` uses `--csv-dir`)
+- [x] README — Section 3 "Single-Agent Backtest" with usage examples
+- [x] README — Updated parameter reference table with `--agent-name`
 
 ### Phase 2 (Future): Advanced Live Trading
 - [ ] Multi-agent live mode on Lighter DEX

@@ -58,7 +58,7 @@ def _estimate_per_call_cost(model: str) -> float:
 def _parse_args() -> argparse.Namespace:
     """解析命令行参数。"""
     p = argparse.ArgumentParser(description="真实 LLM 回测脚本")
-    p.add_argument("--csv", required=True, help="历史数据 CSV 路径")
+    p.add_argument("--csv", default="", help="历史数据 CSV 路径（单品种模式必须；多品种模式可省略）")
     p.add_argument("--runs", type=int, default=3, help="重复运行次数（收集一致性）")
     p.add_argument("--agents", type=int, default=32, help="使用前 N 个预定义原型（共32个）")
     p.add_argument("--anonymize", action="store_true", help="启用资产匿名化")
@@ -72,11 +72,19 @@ def _parse_args() -> argparse.Namespace:
                    help="多品种对比模式，如: --assets ES CL GC ZB")
     p.add_argument("--csv-dir", default="data/cme/market",
                    help="多品种模式的 CSV 目录（默认 data/cme/market/，文件名: {asset}_1h_real.csv）")
+    p.add_argument("--agent-name", default="",
+                   help="指定单个 Agent 人格名称（如: 乐观冲浪型）。不指定则用前 N 个")
     return p.parse_args()
 
 
-def _select_profiles(n: int) -> list[OceanProfile]:
-    """选取前 N 个预定义人格原型。"""
+def _select_profiles(n: int, agent_name: str = "") -> list[OceanProfile]:
+    """选取人格原型。指定名称时只返回该 Agent，否则返回前 N 个。"""
+    if agent_name:
+        profile = PRESET_PROFILES.get(agent_name)
+        if profile is None:
+            raise ValueError(
+                f"未找到人格 '{agent_name}'，可用: {list(PRESET_PROFILES.keys())}")
+        return [profile]
     return [PRESET_PROFILES[k] for k in list(PRESET_PROFILES.keys())[:n]]
 
 
@@ -374,7 +382,7 @@ async def main() -> None:
     setup_logging("llm_backtest")  # 自动保存日志到 logs/llm_backtest/
     trading_cfg = load_trading_config()
     llm_cfg = load_llm_config()
-    profiles = _select_profiles(args.agents)
+    profiles = _select_profiles(args.agents, args.agent_name)
     market = args.market
     asset = args.asset or ("ES" if market == "cme" else "BTC-PERP")
     mkt_label = "CME 期货" if market == "cme" else "加密货币"
@@ -386,6 +394,9 @@ async def main() -> None:
         return
     if args.multi_market:
         await _run_multi_market(profiles, args, trading_cfg, llm_cfg)
+        return
+    if not args.csv:
+        console.print("[red]单品种模式必须指定 --csv 参数[/red]")
         return
     all_runs: list[dict[str, dict]] = []
     for run_idx in range(args.runs):
