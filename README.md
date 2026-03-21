@@ -538,6 +538,9 @@ Comprehensive code review by **Codex (gpt-5.3-codex, xhigh)** and **Opus 4.6**, 
 | Close retry logic | High | 3 attempts with 5% residual threshold (was single-shot with 50% tolerance) |
 | Configurable fill timeout | Medium | `self._fill_timeout` replaces hardcoded 1.5s sleep |
 | No hardcoded price fallback | Medium | `fetch_last_price` returns 0 on failure (was hardcoded $85,000) |
+| TP auto-placement | High | GTC limit order (reduce_only) placed after each fill, using weighted avg entry price |
+| TP recalculation on add | High | Adding to position recalculates avg entry → cancels old TP → places new TP at correct price |
+| Cancel before close | Medium | `close_all_positions` cancels all pending orders (TP etc.) before closing |
 
 ### WebSocket Reliability (`lighter_feed.py`)
 
@@ -555,6 +558,7 @@ Comprehensive code review by **Codex (gpt-5.3-codex, xhigh)** and **Opus 4.6**, 
 | Warmup skip position-aware | Medium | Only skips first signal when flat; with position, preserves close signals |
 | Trade count Redis persistence | High | `_trade_count` persisted to `agent:{id}:trade_count` in Redis; survives restarts so L3/L4 thresholds continue correctly |
 | HOLD excluded from count | Medium | Only BUY/SELL increment trade count; HOLD no longer inflates L3 reflection / L4 wisdom triggers |
+| Position direction in prompt | High | Decision prompt now shows `LONG`/`SHORT` direction; LLM no longer guesses → restores trading frequency |
 
 ### Observability (`logger.py`)
 
@@ -1075,10 +1079,14 @@ Example signal notification:
 - [x] Lighter WS real-time data feed (`lighter_feed.py`) — BBO → MarketSnapshot
 - [x] Lighter live executor (`lighter_executor.py`) — IOC market orders via SDK
 - [x] Single-agent live entry script (`live_lighter.py`) — dry-run + live modes
-- [x] Lighter config (`config/lighter.yaml`) — ticker, position limits, costs
+- [x] Lighter config (`config/lighter.yaml`) — ticker, position limits, costs, TP toggle
 - [x] 26 unit tests for feed + executor
 - [x] Auto-read on-chain leverage (IMF → leverage conversion)
 - [x] Ctrl+C graceful shutdown with position close
+- [x] TP auto-placement — GTC limit order (reduce_only) after each fill, configurable `tp.profit_pct`
+- [x] Weighted avg entry tracking — adding to position recalculates avg → re-places TP at correct price
+- [x] `cancel_all_orders()` before new TP and before close, prevents stale order conflicts
+- [x] Decision prompt shows position direction (`LONG`/`SHORT`) — fixes trading frequency drop
 - [ ] Multi-agent live mode
 - [ ] WebSocket fill confirmation integration
 - [ ] Live performance dashboard

@@ -10,7 +10,8 @@ from lighter import ApiClient, Configuration, SignerClient
 from loguru import logger
 
 from src.execution.lighter_helpers import (
-    fetch_last_price, place_ioc_order, query_balance, query_leverage, query_position,
+    cancel_all_orders, fetch_last_price, place_ioc_order, place_tp_limit_order,
+    query_balance, query_leverage, query_position,
 )
 from src.execution.signal import Action, TradeSignal
 
@@ -27,6 +28,8 @@ class LighterExecutor:
         api_key_index: int = 0, max_position: Decimal = Decimal("0.01"),
         fill_timeout: float = 3.0, min_balance: Decimal = Decimal("10"),
         dry_run: bool = False,
+        tp_enabled: bool = False, tp_profit_pct: float = 0.18,
+        leverage: int = 1,
     ) -> None:
         self._private_key = private_key or os.environ.get("LIGHTER_API_KEY_PRIVATE_KEY", "")
         self._account_index, self._api_key_index = account_index, api_key_index
@@ -38,7 +41,11 @@ class LighterExecutor:
         self._base_mult = self._price_mult = 1
         self._ticker, self._last_price = "", Decimal("0")
         self._local_position = self._realized_pnl = Decimal("0")
+        self._avg_entry_price = Decimal("0")  # 综合持仓均价（加权平均）
         self._trade_count = self._consecutive_losses = 0
+        # TP 止盈挂单配置
+        self._tp_enabled, self._tp_profit_pct = tp_enabled, tp_profit_pct
+        self._leverage = leverage
         # #7: 防止并发执行信号
         self._exec_lock = asyncio.Lock()
 
@@ -157,13 +164,88 @@ class LighterExecutor:
         if filled > Decimal("0.000001"):
             self._local_position = pos_after
             self._trade_count += 1
+            # 更新综合均价
+            self._update_avg_entry(pos_before, pos_after, price)
             logger.info(
                 f"REST 确认成交: {side} {filled} {self._ticker} "
-                f"仓位 {pos_before}→{pos_after}"
+                f"仓位 {pos_before}→{pos_after} 均价=${self._avg_entry_price:,.2f}"
             )
+            # 取消旧 TP → 用新均价挂新 TP
+            await self._place_tp_if_enabled(pos_after)
             return True
         logger.warning(f"REST 确认未成交: 仓位未变 {pos_before}")
         return False
+
+    def _update_avg_entry(
+        self, pos_before: Decimal, pos_after: Decimal, fill_price: Decimal,
+    ) -> None:
+        """根据成交更新综合持仓均价。
+
+        同向加仓 → 加权平均；减仓 → 均价不变；翻仓/新开 → 重置为成交价。
+        """
+        filled = pos_after - pos_before
+        # 仓位归零
+        if pos_after == 0:
+            self._avg_entry_price = Decimal("0")
+            return
+        # 方向翻转（多→空 或 空→多）或从零开仓
+        if pos_before == 0 or (pos_before > 0) != (pos_after > 0):
+            self._avg_entry_price = fill_price
+            return
+        # 同向加仓：加权平均
+        if abs(pos_after) > abs(pos_before):
+            old_val = abs(pos_before) * self._avg_entry_price
+            new_val = abs(filled) * fill_price
+            self._avg_entry_price = (old_val + new_val) / abs(pos_after)
+            return
+        # 同向减仓：均价不变（已实现盈亏不影响剩余仓位成本）
+
+    async def _place_tp_if_enabled(self, position: Decimal) -> None:
+        """取消旧 TP 挂单 → 用综合均价挂新 TP（如果启用）。"""
+        if not self._tp_enabled or position == 0:
+            return
+        tp_price = self._calc_tp_price(position)
+        if self._dry_run:
+            logger.info(
+                f"[DRY-RUN] TP 挂单: {abs(position)} @ ${tp_price:,.2f} "
+                f"(均价=${self._avg_entry_price:,.2f})"
+            )
+            return
+        if not self._signer or self._market_index is None:
+            return
+        # 先取消旧挂单，再挂新的
+        await self._safe_cancel_all_orders()
+        try:
+            tp_side = "sell" if position > 0 else "buy"
+            idx = int(time.time() * 1_000_000) % 1_000_000_000
+            await place_tp_limit_order(
+                self._signer, self._market_index, idx,
+                tp_side, abs(position), self._base_mult,
+                self._price_mult, tp_price,
+            )
+            logger.info(
+                f"TP 已更新: {tp_side} {abs(position)} @ ${tp_price:,.2f} "
+                f"(均价=${self._avg_entry_price:,.2f})"
+            )
+        except Exception as e:
+            logger.warning(f"TP 挂单失败（不影响主流程）: {e}")
+
+    def _calc_tp_price(self, position: Decimal) -> Decimal:
+        """用综合均价计算 TP：avg_entry × (1 ± profit_pct / leverage)。"""
+        offset = Decimal(str(self._tp_profit_pct)) / Decimal(str(self._leverage))
+        if position > 0:  # LONG
+            return self._avg_entry_price * (Decimal("1") + offset)
+        else:  # SHORT
+            return self._avg_entry_price * (Decimal("1") - offset)
+
+    async def _safe_cancel_all_orders(self) -> None:
+        """安全取消全部挂单，失败只记日志。"""
+        if self._dry_run or not self._signer or self._market_index is None:
+            return
+        try:
+            await cancel_all_orders(self._signer, self._market_index)
+        except Exception as e:
+            logger.warning(f"取消挂单失败（不影响主流程）: {e}")
 
     async def get_position(self) -> Decimal:
         return await query_position(
@@ -193,6 +275,8 @@ class LighterExecutor:
 
     async def _close_all_locked(self) -> bool:
         """#2: 平仓逻辑 — 严格验证 + 重试。"""
+        # 平仓前取消所有挂单（TP 等），避免干扰
+        await self._safe_cancel_all_orders()
         pos = await self.get_position()
         if abs(pos) == 0:
             return True

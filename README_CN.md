@@ -523,6 +523,9 @@ if action_str in ("BUY", "SELL") and confidence == 0.0:
 | 平仓重试逻辑 | 高 | 3 次重试 + 5% 残余阈值（原来一次 + 50% 容忍） |
 | 可配置成交超时 | 中 | `self._fill_timeout` 替代硬编码 1.5s |
 | 无硬编码价格兜底 | 中 | `fetch_last_price` 失败返回 0（原硬编码 $85,000） |
+| TP 自动挂单 | 高 | 每次成交后挂 GTC 限价单（reduce_only），基于加权均价计算 TP 价格 |
+| TP 加仓重算 | 高 | 加仓后重算综合均价 → 取消旧 TP → 以新均价挂新 TP |
+| 平仓前取消挂单 | 中 | `close_all_positions` 前先取消所有挂单（TP 等），避免干扰 |
 
 ### WebSocket 可靠性（`lighter_feed.py`）
 
@@ -540,6 +543,7 @@ if action_str in ("BUY", "SELL") and confidence == 0.0:
 | 预热跳过仓位感知 | 中 | 仅空仓时跳过首信号；有仓位时保留平仓信号 |
 | 交易计数 Redis 持久化 | 高 | `_trade_count` 持久化到 Redis `agent:{id}:trade_count`，重启后恢复，L3/L4 阈值跨重启延续 |
 | HOLD 不计入交易笔数 | 中 | 仅 BUY/SELL 递增计数器，HOLD 不再膨胀 L3 反思 / L4 智慧提取触发频率 |
+| 持仓方向显示 | 高 | Decision prompt 显示 `LONG`/`SHORT` 方向，修复 LLM 因不知方向导致 confidence 下降、交易频率骤降 |
 
 ### 可观测性（`logger.py`）
 
@@ -1359,10 +1363,14 @@ Action KL=0.312 > critical(0.2)
 - [x] Lighter WS 实时行情数据源（`lighter_feed.py`）— BBO → MarketSnapshot
 - [x] Lighter 实盘执行器（`lighter_executor.py`）— 通过 SDK 发送 IOC 市价单
 - [x] 单 Agent 实盘入口脚本（`live_lighter.py`）— dry-run + live 两种模式
-- [x] Lighter 配置（`config/lighter.yaml`）— ticker、仓位限制、成本
+- [x] Lighter 配置（`config/lighter.yaml`）— ticker、仓位限制、成本、TP 开关
 - [x] 26 个单元测试覆盖 feed + executor
 - [x] 启动时自动读取链上杠杆（IMF → 杠杆换算）
 - [x] Ctrl+C 优雅退出 + 自动平仓
+- [x] TP 自动挂单 — 成交后挂 GTC 限价单（reduce_only），可配置 `tp.profit_pct`
+- [x] 综合均价跟踪 — 加仓后加权计算均价 → 取消旧 TP → 以新均价挂新 TP
+- [x] `cancel_all_orders()` 平仓前/新 TP 前取消旧挂单，防止冲突
+- [x] Decision prompt 显示仓位方向（`LONG`/`SHORT`），修复交易频率骤降
 - [ ] 多 Agent 实盘模式
 - [ ] WebSocket 成交确认集成
 - [ ] 实盘绩效仪表盘

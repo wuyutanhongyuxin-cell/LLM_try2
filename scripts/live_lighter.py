@@ -180,6 +180,9 @@ async def main() -> None:
     max_pos = Decimal(str(args.max_position or lighter_cfg.get("max_position_btc", 0.01)))
     leverage = lighter_cfg.get("leverage", 1)
     mmr = lighter_cfg.get("maintenance_margin_rate", 0.004)
+    tp_cfg = lighter_cfg.get("tp", {})
+    tp_enabled = tp_cfg.get("enabled", False)
+    tp_profit_pct = tp_cfg.get("profit_pct", 0.18)
     profile = get_profile(args.agent)
     asset_config = _build_asset_config(ticker)
 
@@ -190,6 +193,7 @@ async def main() -> None:
         api_key_index=int(os.environ.get("LIGHTER_API_KEY_INDEX", "0")),
         max_position=max_pos, fill_timeout=lighter_cfg.get("fill_timeout_seconds", 3.0),
         min_balance=Decimal(str(lighter_cfg.get("min_balance_usd", 10))), dry_run=args.dry_run,
+        tp_enabled=tp_enabled, tp_profit_pct=tp_profit_pct, leverage=leverage,
     )
     redis_bus = RedisBus(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
     telegram = TelegramNotifier()
@@ -206,6 +210,7 @@ async def main() -> None:
     # 链上杠杆优先，配置兜底
     if executor._detected_leverage > 0:
         leverage = executor._detected_leverage
+        executor._leverage = leverage  # 同步更新 TP 计算用的杠杆
     logger.info(f"杠杆: {leverage}x {'(链上)' if executor._detected_leverage > 0 else '(配置)'}")
 
     trade_logger = PersistentTradeLogger(market_type="lighter")

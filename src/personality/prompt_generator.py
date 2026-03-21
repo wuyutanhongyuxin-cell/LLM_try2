@@ -168,7 +168,7 @@ def generate_decision_prompt(
         pl = ["## Current Positions"]
         for p in positions:
             pl.append(
-                f"- {p.get('asset', '?')}: size={p.get('size', 0)}, "
+                f"- {p.get('asset', '?')}: {p.get('direction', 'FLAT')} size={p.get('size', 0)}, "
                 f"entry=${p.get('entry_price', 0):,.2f}, "
                 f"unrealized_pnl=${p.get('unrealized_pnl', 0):,.2f}"
             )

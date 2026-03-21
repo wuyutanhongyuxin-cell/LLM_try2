@@ -7,8 +7,8 @@
 - `signal.py` — TradeSignal 数据结构（~42行）
 - `account.py` — AgentAccount 虚拟账户：LONG/SHORT 双向持仓+SL/TP（~201行）
 - `paper_trader.py` — PaperTrader 纸上交易管理器（~124行）
-- `lighter_executor.py` — Lighter DEX 实盘执行器：双向交易+REST仓位确认+并发锁+安全余额查询（~241行）
-- `lighter_helpers.py` — Lighter 辅助函数：下单签名、账户查询、杠杆读取（~168行）
+- `lighter_executor.py` — Lighter DEX 实盘执行器：双向交易+REST仓位确认+并发锁+安全余额查询+TP止盈挂单+综合均价跟踪（~296行）
+- `lighter_helpers.py` — Lighter 辅助函数：下单签名、TP限价单、取消全部挂单、账户查询、杠杆读取（~228行）
 - `stats_helper.py` — Sharpe / MaxDD / 胜率 / 盈亏比计算（~75行）
 - `aggregator.py` — 信号聚合器 independent + voting + 辩论模式（~110行）
 - `risk_manager.py` — 全局风控（~79行）

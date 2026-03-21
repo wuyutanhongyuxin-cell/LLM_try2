@@ -67,6 +67,65 @@ async def place_ioc_order(
     )
 
 
+async def place_tp_limit_order(
+    signer: SignerClient,
+    market_index: int,
+    client_order_index: int,
+    side: str,
+    size: Decimal,
+    base_mult: int,
+    price_mult: int,
+    tp_price: Decimal,
+) -> None:
+    """挂 GTC 限价单作为止盈。
+
+    side='sell' 平多仓TP，'buy' 平空仓TP。
+    使用 ORDER_TYPE_LIMIT + GTC（28天到期），reduce_only=True。
+    """
+    is_ask = side == "sell"
+    price_int = int(tp_price * price_mult)
+    if price_int < 1:
+        price_int = 1
+    # GTC: ORDER_TIME_IN_FORCE_GOOD_TILL_TIME，expiry=28天后
+    import time as _time
+    expiry = int(_time.time()) + 28 * 24 * 3600  # 28天后过期
+
+    tx_type, tx_info, tx_hash_signed, error = signer.sign_create_order(
+        market_index=market_index,
+        client_order_index=client_order_index,
+        base_amount=int(size * base_mult),
+        price=price_int,
+        is_ask=is_ask,
+        order_type=signer.ORDER_TYPE_LIMIT,
+        time_in_force=signer.ORDER_TIME_IN_FORCE_GOOD_TILL_TIME,
+        reduce_only=True,
+        trigger_price=0,
+        order_expiry=expiry,
+    )
+    if error is not None:
+        raise RuntimeError(f"Lighter TP 签名错误: {error}")
+
+    resp = await signer.send_tx(tx_type=int(tx_type), tx_info=tx_info)
+    logger.info(
+        f"Lighter TP 限价单已挂: {side} {size} @ ${tp_price:,.2f} "
+        f"idx={client_order_index}"
+    )
+
+
+async def cancel_all_orders(
+    signer: SignerClient, market_index: int,
+) -> None:
+    """取消指定市场所有挂单（平仓或反向开仓前清理旧TP单）。"""
+    tx_type, tx_info, tx_hash_signed, error = signer.sign_cancel_all_orders(
+        market_index=market_index,
+    )
+    if error is not None:
+        raise RuntimeError(f"Lighter 取消全部订单签名错误: {error}")
+
+    resp = await signer.send_tx(tx_type=int(tx_type), tx_info=tx_info)
+    logger.info(f"Lighter 已取消市场 {market_index} 全部挂单")
+
+
 async def wait_for_fill(
     event: asyncio.Event,
     fill_results: dict[int, dict],
